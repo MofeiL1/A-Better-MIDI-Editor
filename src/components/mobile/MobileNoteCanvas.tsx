@@ -44,16 +44,9 @@ export const MobileNoteCanvas: React.FC<MobileNoteCanvasProps> = ({
     if (!ctx) return;
 
     const dpr = window.devicePixelRatio || 1;
-    const targetW = Math.round(width * dpr);
-    const targetH = Math.round(height * dpr);
-
-    // Only resize backing store when dimensions actually change (avoids flash)
-    if (canvas.width !== targetW || canvas.height !== targetH) {
-      canvas.width = targetW;
-      canvas.height = targetH;
-    }
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, width, height);
+    canvas.width = Math.round(width * dpr);
+    canvas.height = Math.round(height * dpr);
+    ctx.scale(dpr, dpr);
 
     // Background
     ctx.fillStyle = '#1a1a1c';
@@ -64,10 +57,12 @@ export const MobileNoteCanvas: React.FC<MobileNoteCanvasProps> = ({
     const visiblePitches = Math.ceil(height / pps) + 2;
 
     // ─── Grid: pitch rows ─────────────────────────────────
+    const baseScrollY = Math.floor(scrollY);
+    const fracY = scrollY - baseScrollY;
     for (let i = -1; i <= visiblePitches; i++) {
-      const pitch = scrollY + i;
+      const pitch = baseScrollY + i;
       if (pitch < 0 || pitch > 127) continue;
-      const y = height - (pitch - scrollY + 1) * pps;
+      const y = height - (pitch - baseScrollY + 1 - fracY) * pps;
       const isBlack = BLACK_KEYS.has(pitchClass(pitch));
       const inScale = isInScale(pitch, scaleRoot, scaleMode);
       const isRoot = pitchClass(pitch) === pitchClass(scaleRoot);
@@ -112,8 +107,8 @@ export const MobileNoteCanvas: React.FC<MobileNoteCanvasProps> = ({
     // ─── Notes ────────────────────────────────────────────
     const minTick = scrollX;
     const maxTick = scrollX + width / ppt;
-    const minPitch = scrollY - 1;
-    const maxPitch = scrollY + visiblePitches + 1;
+    const minPitch = baseScrollY - 1;
+    const maxPitch = baseScrollY + visiblePitches + 1;
 
     for (const note of notes) {
       if (note.startTick + note.duration < minTick || note.startTick > maxTick) continue;
@@ -121,7 +116,7 @@ export const MobileNoteCanvas: React.FC<MobileNoteCanvasProps> = ({
 
       const x = (note.startTick - scrollX) * ppt;
       const w = note.duration * ppt;
-      const y = height - (note.pitch - scrollY + 1) * pps;
+      const y = height - (note.pitch - baseScrollY + 1 - fracY) * pps;
       const selected = selectedNoteIds.has(note.id);
       const inScale = isInScale(note.pitch, scaleRoot, scaleMode);
 

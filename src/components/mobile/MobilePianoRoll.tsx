@@ -80,11 +80,13 @@ export const MobilePianoRoll: React.FC<{ editMode: boolean }> = ({ editMode }) =
 
   const hitTestNote = useCallback(
     (mx: number, my: number): { note: Note; isResize: boolean } | null => {
+      const baseY = Math.floor(scrollY);
+      const fracY = scrollY - baseY;
       for (let i = notes.length - 1; i >= 0; i--) {
         const n = notes[i];
         const nx = (n.startTick - scrollX) * ppt;
         const nw = n.duration * ppt;
-        const ny = size.height - (n.pitch - scrollY + 1) * pps;
+        const ny = size.height - (n.pitch - baseY + 1 - fracY) * pps;
         if (mx >= nx && mx <= nx + nw && my >= ny && my <= ny + pps) {
           return { note: n, isResize: mx >= nx + nw - 16 }; // 16px for touch
         }
