@@ -24,7 +24,8 @@ export function snapTick(tick: number, snapTicks: number): number {
 }
 
 export function getSnapTicksFromDivision(division: number, ticksPerBeat: number): number {
-  return ticksPerBeat / division;
+  // division is note denominator: 1=whole, 2=half, 4=quarter, 8=eighth, etc.
+  return (ticksPerBeat * 4) / division;
 }
 
 export function tickToSeconds(tick: number, bpm: number, ticksPerBeat: number): number {

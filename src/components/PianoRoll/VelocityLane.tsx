@@ -44,6 +44,7 @@ export const VelocityLane: React.FC<VelocityLaneProps> = ({
   const canvasRect = useRef<DOMRect | null>(null);
   const beginDrag = useProjectStore((s) => s.beginDrag);
   const endDrag = useProjectStore((s) => s.endDrag);
+  const setNoteVelocities = useProjectStore((s) => s.setNoteVelocities);
   const setVelocityDragNoteId = useUiStore((s) => s.setVelocityDragNoteId);
   const velocityDragNoteId = useUiStore((s) => s.velocityDragNoteId);
   const hoveredNoteId = useUiStore((s) => s.hoveredNoteId);
@@ -57,48 +58,6 @@ export const VelocityLane: React.FC<VelocityLaneProps> = ({
   const barTopY = useCallback((velocity: number) => {
     return height - (velocity / 127) * (height - 4);
   }, [height]);
-
-  // Hit test: match the draw order (startTick asc → velocity desc → pitch asc).
-  // Iterate in reverse so the topmost (last-drawn) bar is checked first.
-  // Among grab-zone hits, prefer selected notes when distances are similar.
-  const hitTestVelocityBar = useCallback((mx: number, my: number): Note | null => {
-    const sorted = [...notes].sort(
-      (a, b) => a.startTick - b.startTick || b.velocity - a.velocity || a.pitch - b.pitch
-    );
-
-    let bestNote: Note | null = null;
-    let bestDist = Infinity;
-
-    // Reverse: last-drawn (visually on top) first
-    for (let i = sorted.length - 1; i >= 0; i--) {
-      const note = sorted[i];
-      const x = barX(note);
-      const bw = Math.max(note.duration * pixelsPerTick, BAR_WIDTH);
-      if (mx < x - 2 || mx > x + bw + 2) continue;
-
-      const topY = barTopY(note.velocity);
-      const distY = Math.abs(my - topY);
-
-      if (distY <= GRAB_ZONE) {
-        const isSelected = selectedNoteIds.has(note.id);
-        const prevSelected = bestNote ? selectedNoteIds.has(bestNote.id) : false;
-
-        if (distY < bestDist - 3) {
-          bestDist = distY;
-          bestNote = note;
-        } else if (distY <= bestDist + 3) {
-          if (isSelected && !prevSelected) {
-            bestDist = distY;
-            bestNote = note;
-          } else if (!prevSelected && distY < bestDist) {
-            bestDist = distY;
-            bestNote = note;
-          }
-        }
-      }
-    }
-    return bestNote;
-  }, [notes, barX, barTopY, pixelsPerTick, selectedNoteIds]);
 
   // Body hit test: any point on a bar's visible area, respecting draw order.
   // Reverse-iterate the draw order so visually topmost bar wins.
@@ -116,6 +75,15 @@ export const VelocityLane: React.FC<VelocityLaneProps> = ({
     }
     return null;
   }, [notes, barX, barTopY, pixelsPerTick, height]);
+
+  // Grab zone hit test: only the visually front bar's grab zone is accessible.
+  const hitTestVelocityBar = useCallback((mx: number, my: number): Note | null => {
+    const front = hitTestBarBody(mx, my);
+    if (!front) return null;
+    const topY = barTopY(front.velocity);
+    if (Math.abs(my - topY) <= GRAB_ZONE) return front;
+    return null;
+  }, [hitTestBarBody, barTopY]);
 
   // --- Drawing ---
   useEffect(() => {
@@ -197,45 +165,74 @@ export const VelocityLane: React.FC<VelocityLaneProps> = ({
     const mx = e.clientX - rect.left;
     const my = e.clientY - rect.top;
 
-    // Body hit: select the visually topmost bar at this position
-    const bodyHit = hitTestBarBody(mx, my);
-    if (bodyHit) {
-      const { selectedNoteIds: sel, setSelectedNoteIds: setSel } = useUiStore.getState();
-      if (e.shiftKey) {
-        const next = new Set(sel);
-        if (next.has(bodyHit.id)) next.delete(bodyHit.id); else next.add(bodyHit.id);
-        setSel(next);
-      } else {
-        setSel(new Set([bodyHit.id]));
+    // Grab hit: visually front bar + cursor in its grab zone
+    const grabHit = hitTestVelocityBar(mx, my);
+
+    if (!grabHit) {
+      // No grab — just select the visually front bar
+      const bodyHit = hitTestBarBody(mx, my);
+      if (bodyHit) {
+        const { selectedNoteIds: sel, setSelectedNoteIds: setSel } = useUiStore.getState();
+        if (e.shiftKey) {
+          const next = new Set(sel);
+          if (next.has(bodyHit.id)) next.delete(bodyHit.id); else next.add(bodyHit.id);
+          setSel(next);
+        } else if (!sel.has(bodyHit.id)) {
+          setSel(new Set([bodyHit.id]));
+        }
       }
+      return;
     }
 
-    // Grab zone hit: only start drag if near the bar top
-    const grabHit = hitTestVelocityBar(mx, my);
-    if (!grabHit) return;
+    // Grab hit — select and start drag
+    const { selectedNoteIds: sel, setSelectedNoteIds: setSel } = useUiStore.getState();
+    if (e.shiftKey) {
+      const next = new Set(sel);
+      next.add(grabHit.id);
+      setSel(next);
+    } else if (!sel.has(grabHit.id)) {
+      setSel(new Set([grabHit.id]));
+    }
 
     // Start dragging this specific note's velocity — relative mode (no jump)
     dragNoteId.current = grabHit.id;
     beginDrag();
     setVelocityDragNoteId(grabHit.id);
 
-    // Ensure dragged note is selected
-    const { selectedNoteIds: sel2, setSelectedNoteIds: setSel2 } = useUiStore.getState();
-    if (!sel2.has(grabHit.id)) {
-      setSel2(e.shiftKey ? new Set([...sel2, grabHit.id]) : new Set([grabHit.id]));
+    // Record mouse Y at grab time and snapshot velocities of all selected notes
+    const startClientY = e.clientY;
+    const pxPerVel = (height - 4) / 127;
+    const currentSel = useUiStore.getState().selectedNoteIds;
+    const dragInSelection = currentSel.has(grabHit.id);
+    const clipId = useUiStore.getState().activeClipId;
+
+    // Snapshot: read fresh notes from store to avoid stale closure
+    const freshNotes = useProjectStore.getState().project.tracks
+      .flatMap((t) => t.clips).flatMap((c) => c.notes);
+
+    const velSnapshot: Map<string, number> = new Map();
+    if (dragInSelection && currentSel.size > 1) {
+      for (const note of freshNotes) {
+        if (currentSel.has(note.id)) velSnapshot.set(note.id, note.velocity);
+      }
+    } else {
+      velSnapshot.set(grabHit.id, grabHit.velocity);
     }
 
-    // Record mouse Y at grab time and the note's current velocity
-    const startClientY = e.clientY;
-    const startVelocity = grabHit.velocity;
-    const pxPerVel = (height - 4) / 127;
-
     const onMove = (ev: MouseEvent) => {
-      if (!dragNoteId.current) return;
+      if (!dragNoteId.current || !clipId) return;
       const deltaY = startClientY - ev.clientY;
-      const deltaVel = deltaY / pxPerVel;
-      const vel = Math.round(Math.max(1, Math.min(127, startVelocity + deltaVel)));
-      onVelocityChange?.(dragNoteId.current, vel);
+      const deltaVel = Math.round(deltaY / pxPerVel);
+      if (velSnapshot.size === 1) {
+        const [id, startVel] = velSnapshot.entries().next().value!;
+        onVelocityChange?.(id, Math.max(1, Math.min(127, startVel + deltaVel)));
+      } else {
+        const batch = new Map<string, number>();
+        for (const [id, startVel] of velSnapshot) {
+          batch.set(id, Math.max(1, Math.min(127, startVel + deltaVel)));
+        }
+        setNoteVelocities(clipId, batch);
+      }
     };
 
     const onUp = () => {
@@ -248,7 +245,7 @@ export const VelocityLane: React.FC<VelocityLaneProps> = ({
 
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);
-  }, [hitTestVelocityBar, hitTestBarBody, height, onVelocityChange, beginDrag, endDrag, setVelocityDragNoteId]);
+  }, [hitTestVelocityBar, hitTestBarBody, height, onVelocityChange, beginDrag, endDrag, setVelocityDragNoteId, setNoteVelocities]);
 
   // Update cursor and hover highlight
   const handleMouseMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {

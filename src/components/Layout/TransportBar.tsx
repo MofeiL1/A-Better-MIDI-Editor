@@ -1,8 +1,10 @@
-import React, { useRef } from 'react';
+import React, { useRef, useState } from 'react';
 import { useProjectStore } from '../../store/projectStore';
 import { useUiStore } from '../../store/uiStore';
 import { usePlayback } from '../../hooks/usePlayback';
-import { importMidi, exportMidi } from '../../utils/midi';
+import { parseMidiTracks, buildProjectFromMidi, exportMidi } from '../../utils/midi';
+import type { MidiTrackInfo } from '../../utils/midi';
+import type { Midi } from '@tonejs/midi';
 
 const btnStyle: React.CSSProperties = {
   padding: '3px 8px',
@@ -37,6 +39,14 @@ export const TransportBar: React.FC = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { togglePlayback, stop } = usePlayback();
 
+  // Track picker state for multi-track MIDI import
+  const [trackPicker, setTrackPicker] = useState<{
+    tracks: MidiTrackInfo[];
+    midi: Midi;
+    fileName: string;
+    selected: Set<number>;
+  } | null>(null);
+
   const bpm = project.tempoChanges[0]?.bpm ?? 120;
   const ticksPerBeat = project.ticksPerBeat;
   const ts = project.timeSignatureChanges[0] ?? { numerator: 4 };
@@ -48,26 +58,47 @@ export const TransportBar: React.FC = () => {
   const tick = Math.floor(playheadTick % ticksPerBeat);
   const posStr = `${bar}.${beat}.${String(tick).padStart(3, '0')}`;
 
+  const finishImport = (proj: ReturnType<typeof buildProjectFromMidi>) => {
+    stop();
+    loadProject(proj);
+    const firstTrack = proj.tracks[0];
+    const firstClip = firstTrack?.clips[0];
+    const { setActiveTrack, setActiveClip, clearSelection, setPlayheadTick: setPh } = useUiStore.getState();
+    setActiveTrack(firstTrack?.id ?? '');
+    setActiveClip(firstClip?.id ?? '');
+    clearSelection();
+    setPh(0);
+  };
+
   const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     try {
-      const proj = await importMidi(file);
-      stop();
-      loadProject(proj);
-      // Reset UI state to point at the new project's first track/clip
-      const firstTrack = proj.tracks[0];
-      const firstClip = firstTrack?.clips[0];
-      const { setActiveTrack, setActiveClip, clearSelection, setPlayheadTick } = useUiStore.getState();
-      setActiveTrack(firstTrack?.id ?? '');
-      setActiveClip(firstClip?.id ?? '');
-      clearSelection();
-      setPlayheadTick(0);
+      const { midi, tracks } = await parseMidiTracks(file);
+      if (tracks.length <= 1) {
+        // Single track (or none) — import directly
+        finishImport(buildProjectFromMidi(midi, file.name));
+      } else {
+        // Multiple tracks — show picker
+        setTrackPicker({
+          tracks,
+          midi,
+          fileName: file.name,
+          selected: new Set(tracks.map((t) => t.index)),
+        });
+      }
     } catch (err) {
       console.error('Failed to import MIDI:', err);
       alert('Import failed: ' + (err instanceof Error ? err.message : String(err)));
     }
     e.target.value = '';
+  };
+
+  const handleTrackPickerConfirm = () => {
+    if (!trackPicker) return;
+    const proj = buildProjectFromMidi(trackPicker.midi, trackPicker.fileName, Array.from(trackPicker.selected));
+    finishImport(proj);
+    setTrackPicker(null);
   };
 
   const handleExport = () => {
@@ -264,6 +295,72 @@ export const TransportBar: React.FC = () => {
       <button onClick={handleExport} style={textBtnStyle}>
         Export
       </button>
+      {/* Track picker modal */}
+      {trackPicker && (
+        <div style={{
+          position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
+        }}
+          onClick={() => setTrackPicker(null)}
+        >
+          <div style={{
+            backgroundColor: '#2a2a2a', borderRadius: 8, padding: '16px 20px',
+            border: '1px solid #555', minWidth: 280, maxWidth: 400,
+            color: '#ccc', fontFamily: '-apple-system, "SF Pro Text", sans-serif',
+          }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 12, color: '#eee' }}>
+              Select tracks to import
+            </div>
+            <div style={{ maxHeight: 300, overflowY: 'auto' }}>
+              {trackPicker.tracks.map((t) => (
+                <label key={t.index} style={{
+                  display: 'flex', alignItems: 'center', gap: 8, padding: '6px 4px',
+                  cursor: 'pointer', borderRadius: 4,
+                  backgroundColor: trackPicker.selected.has(t.index) ? 'rgba(255,255,255,0.05)' : 'transparent',
+                }}>
+                  <input
+                    type="checkbox"
+                    checked={trackPicker.selected.has(t.index)}
+                    onChange={() => {
+                      const next = new Set(trackPicker.selected);
+                      if (next.has(t.index)) next.delete(t.index); else next.add(t.index);
+                      setTrackPicker({ ...trackPicker, selected: next });
+                    }}
+                    style={{ accentColor: '#6af', colorScheme: 'dark' }}
+                  />
+                  <span style={{ flex: 1, fontSize: 12 }}>
+                    {t.name}
+                    <span style={{ color: '#888', marginLeft: 6 }}>
+                      {t.noteCount} notes · {t.instrument}
+                    </span>
+                  </span>
+                </label>
+              ))}
+            </div>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 14 }}>
+              <button
+                onClick={() => setTrackPicker(null)}
+                style={{ ...btnStyle, color: '#999', border: '1px solid #555', padding: '4px 12px' }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleTrackPickerConfirm}
+                disabled={trackPicker.selected.size === 0}
+                style={{
+                  ...btnStyle, color: '#fff', backgroundColor: '#4a7aff',
+                  border: 'none', padding: '4px 14px', borderRadius: 4,
+                  opacity: trackPicker.selected.size === 0 ? 0.4 : 1,
+                }}
+              >
+                Import {trackPicker.selected.size > 0 ? `(${trackPicker.selected.size})` : ''}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

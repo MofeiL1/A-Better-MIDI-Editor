@@ -85,7 +85,7 @@ export const Grid: React.FC<GridProps> = ({
 
     // -- Vertical lines: subdivisions, beats, bars --
     const ticksPerBar = ticksPerBeat * numerator;
-    const snapTicks = ticksPerBeat / snapDivision;
+    const snapTicks = (ticksPerBeat * 4) / snapDivision;
     const startTick = Math.floor(scrollX / snapTicks) * snapTicks;
     const endTick = scrollX + width / pixelsPerTick;
 

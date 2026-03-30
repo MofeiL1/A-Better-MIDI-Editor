@@ -12,7 +12,7 @@ interface PlayheadHandleProps {
   onSetPlayhead?: (tick: number) => void;
 }
 
-export const HANDLE_HEIGHT = 22;
+export const HANDLE_HEIGHT = 20;
 
 export const PlayheadHandle: React.FC<PlayheadHandleProps> = ({
   width,
@@ -73,7 +73,7 @@ export const PlayheadHandle: React.FC<PlayheadHandleProps> = ({
         ctx.lineWidth = 1;
         ctx.beginPath();
         ctx.moveTo(Math.round(x) + 0.5, 0);
-        ctx.lineTo(Math.round(x) + 0.5, 12);
+        ctx.lineTo(Math.round(x) + 0.5, h);
         ctx.stroke();
 
         const barNum = Math.floor(tick / ticksPerBar) + 1;

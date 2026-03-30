@@ -62,6 +62,7 @@ interface ProjectStore {
   trimNoteStart: (clipId: string, noteIds: string[], deltaTick: number) => void;
   deleteNotes: (clipId: string, noteIds: string[]) => void;
   setNoteVelocity: (clipId: string, noteIds: string[], velocity: number) => void;
+  setNoteVelocities: (clipId: string, velocities: Map<string, number>) => void;
   pasteNotes: (clipId: string, notes: Omit<Note, 'id'>[], atTick: number) => string[];
 
   // Project-level
@@ -274,6 +275,26 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
               notes: c.notes.map((n) =>
                 idSet.has(n.id) ? { ...n, velocity: v } : n
               ),
+            }
+          : c
+      ),
+    }))};
+    set({ project: newProject });
+  },
+
+  setNoteVelocities: (clipId, velocities) => {
+    if (!get().isDragging) get().pushUndo();
+    const { project } = get();
+    const newProject = { ...project, tracks: project.tracks.map((t) => ({
+      ...t,
+      clips: t.clips.map((c) =>
+        c.id === clipId
+          ? {
+              ...c,
+              notes: c.notes.map((n) => {
+                const v = velocities.get(n.id);
+                return v !== undefined ? { ...n, velocity: Math.max(1, Math.min(127, v)) } : n;
+              }),
             }
           : c
       ),

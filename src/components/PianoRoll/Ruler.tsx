@@ -13,7 +13,7 @@ interface RulerProps {
   onSetPlayhead?: (tick: number) => void;
 }
 
-const RULER_HEIGHT = 22;
+const RULER_HEIGHT = 20;
 
 export { RULER_HEIGHT };
 
@@ -72,7 +72,7 @@ export const Ruler: React.FC<RulerProps> = ({
         ctx.strokeStyle = '#888';
         ctx.lineWidth = 1;
         ctx.beginPath();
-        ctx.moveTo(Math.round(x) + 0.5, height - 12);
+        ctx.moveTo(Math.round(x) + 0.5, 0);
         ctx.lineTo(Math.round(x) + 0.5, height);
         ctx.stroke();
 

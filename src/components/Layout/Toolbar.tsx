@@ -19,16 +19,17 @@ const SNAP_OPTIONS: { value: SnapResolution; label: string }[] = [
 ];
 
 const selectStyle: React.CSSProperties = {
-  backgroundColor: 'transparent',
-  color: '#bbb',
-  border: 'none',
+  backgroundColor: '#333',
+  color: '#ccc',
+  border: '1px solid #555',
   borderRadius: 3,
-  padding: '2px 4px',
+  padding: '2px 6px',
   fontSize: 11,
   fontWeight: 500,
   fontFamily: '-apple-system, "SF Pro Text", "Helvetica Neue", sans-serif',
   cursor: 'pointer',
   outline: 'none',
+  colorScheme: 'dark',
 };
 
 export const Toolbar: React.FC = () => {

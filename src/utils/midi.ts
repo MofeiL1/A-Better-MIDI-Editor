@@ -2,40 +2,70 @@ import { Midi } from '@tonejs/midi';
 import type { Project } from '../types/model';
 import { generateId } from './id';
 
+export interface MidiTrackInfo {
+  index: number;
+  name: string;
+  noteCount: number;
+  instrument: string;
+}
+
 /**
- * Import a MIDI file into our Project format.
+ * Parse a MIDI file and return track info for user selection.
  */
-export async function importMidi(file: File): Promise<Project> {
+export async function parseMidiTracks(file: File): Promise<{ midi: Midi; tracks: MidiTrackInfo[] }> {
   const arrayBuffer = await file.arrayBuffer();
   const midi = new Midi(arrayBuffer);
+  const tracks = midi.tracks
+    .map((t, i) => ({
+      index: i,
+      name: t.name || `Track ${i + 1}`,
+      noteCount: t.notes.length,
+      instrument: t.instrument?.name ?? 'piano',
+    }))
+    .filter((t) => t.noteCount > 0);
+  return { midi, tracks };
+}
 
+/**
+ * Import specific tracks from a parsed MIDI into our Project format.
+ * If trackIndices is null/undefined, import all tracks with notes.
+ */
+export function buildProjectFromMidi(midi: Midi, fileName: string, trackIndices?: number[]): Project {
   const ticksPerBeat = midi.header.ppq;
 
-  const tracks = midi.tracks.map((midiTrack, index) => ({
+  const selectedTracks = trackIndices
+    ? midi.tracks.filter((_, i) => trackIndices.includes(i))
+    : midi.tracks.filter((t) => t.notes.length > 0);
+
+  // Merge all selected tracks into one clip (single-track piano roll)
+  const allNotes = selectedTracks.flatMap((midiTrack) =>
+    midiTrack.notes.map((n) => ({
+      id: generateId(),
+      pitch: n.midi,
+      startTick: Math.round(n.ticks),
+      duration: Math.max(1, Math.round(n.durationTicks)),
+      velocity: Math.max(1, Math.min(127, Math.round(n.velocity * 127))),
+      channel: midiTrack.channel ?? 0,
+      pitchBend: [] as { tick: number; value: number }[],
+    }))
+  );
+
+  const trackName = selectedTracks.length === 1
+    ? (selectedTracks[0].name || 'Track 1')
+    : fileName.replace(/\.midi?$/i, '');
+
+  const tracks = [{
     id: generateId(),
-    name: midiTrack.name || `Track ${index + 1}`,
-    instrument: midiTrack.instrument?.name ?? 'piano',
+    name: trackName,
+    instrument: selectedTracks[0]?.instrument?.name ?? 'piano',
     muted: false,
     solo: false,
-    clips: [
-      {
-        id: generateId(),
-        startTick: 0,
-        notes: midiTrack.notes.map((n) => ({
-          id: generateId(),
-          pitch: n.midi,
-          startTick: Math.round(n.ticks),
-          duration: Math.round(n.durationTicks),
-          velocity: Math.round(n.velocity * 127),
-          channel: midiTrack.channel ?? 0,
-          pitchBend: [],
-        })),
-      },
-    ],
-  }));
+    clips: [{ id: generateId(), startTick: 0, notes: allNotes }],
+  }];
 
-  const tempoChanges = midi.header.tempos.length > 0
-    ? midi.header.tempos.map((t) => ({
+  const rawTempos = [...midi.header.tempos].sort((a, b) => a.ticks - b.ticks);
+  const tempoChanges = rawTempos.length > 0
+    ? rawTempos.map((t) => ({
         tick: Math.round(t.ticks),
         bpm: Math.round(t.bpm * 100) / 100,
       }))
@@ -50,7 +80,7 @@ export async function importMidi(file: File): Promise<Project> {
     : [{ tick: 0, numerator: 4, denominator: 4 }];
 
   return {
-    name: file.name.replace(/\.midi?$/i, ''),
+    name: fileName.replace(/\.midi?$/i, ''),
     ticksPerBeat,
     tracks,
     tempoChanges,
@@ -63,18 +93,24 @@ export async function importMidi(file: File): Promise<Project> {
 }
 
 /**
+ * Import a MIDI file — convenience wrapper (imports all tracks with notes).
+ */
+export async function importMidi(file: File): Promise<Project> {
+  const { midi } = await parseMidiTracks(file);
+  return buildProjectFromMidi(midi, file.name);
+}
+
+/**
  * Export our Project to a MIDI file blob.
  */
 export function exportMidi(project: Project): Blob {
   const midi = new Midi();
   Object.defineProperty(midi.header, 'ppq', { value: project.ticksPerBeat, writable: false, configurable: true });
 
-  // Set tempo
   for (const tc of project.tempoChanges) {
     midi.header.tempos.push({ ticks: tc.tick, bpm: tc.bpm });
   }
 
-  // Set time signatures
   for (const ts of project.timeSignatureChanges) {
     midi.header.timeSignatures.push({
       ticks: ts.tick,
@@ -82,7 +118,6 @@ export function exportMidi(project: Project): Blob {
     });
   }
 
-  // Tracks
   for (const track of project.tracks) {
     const midiTrack = midi.addTrack();
     midiTrack.name = track.name;

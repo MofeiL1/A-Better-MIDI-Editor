@@ -23,6 +23,7 @@ type SelectBox = { x1: number; y1: number; x2: number; y2: number } | null;
 
 export const PianoRoll: React.FC = () => {
   const containerRef = useRef<HTMLDivElement>(null);
+  const gridContainerRef = useRef<HTMLDivElement>(null);
   const canvasRect = useRef<DOMRect | null>(null);
   const [size, setSize] = useState({ width: 800, height: 500 });
   const [velHeight, setVelHeight] = useState(DEFAULT_VEL_HEIGHT);
@@ -396,12 +397,11 @@ export const PianoRoll: React.FC = () => {
   }, []);
 
   const handleWheel = useCallback(
-    (e: React.WheelEvent) => {
+    (e: WheelEvent) => {
       e.preventDefault();
       if (e.ctrlKey || e.metaKey) {
         const factor = e.deltaY > 0 ? 0.9 : 1.1;
         const newPpt = Math.max(MIN_ZOOM_X, Math.min(MAX_ZOOM_X, ppt * factor));
-        // Keep playhead at the same screen pixel after zoom
         const playheadPx = (playheadTick - scrollX) * ppt;
         const newScrollX = Math.max(0, playheadTick - playheadPx / newPpt);
         setViewport({ pixelsPerTick: newPpt, scrollX: newScrollX });
@@ -411,8 +411,16 @@ export const PianoRoll: React.FC = () => {
         setViewport({ scrollY: Math.max(0, Math.min(115, scrollY - e.deltaY / pps)) });
       }
     },
-    [ppt, pps, scrollX, scrollY, setViewport]
+    [ppt, pps, scrollX, scrollY, playheadTick, setViewport]
   );
+
+  // Register native wheel handler with passive: false to allow preventDefault
+  useEffect(() => {
+    const el = gridContainerRef.current;
+    if (!el) return;
+    el.addEventListener('wheel', handleWheel, { passive: false });
+    return () => el.removeEventListener('wheel', handleWheel);
+  }, [handleWheel]);
 
   const handleVelocityChange = useCallback(
     (noteId: string, velocity: number) => {
@@ -473,8 +481,8 @@ export const PianoRoll: React.FC = () => {
           canvasHeight={size.height}
         />
         <div
+          ref={gridContainerRef}
           style={{ position: 'relative', flex: 1, overflow: 'hidden' }}
-          onWheel={handleWheel}
         >
           <Grid
             width={gridWidth}
