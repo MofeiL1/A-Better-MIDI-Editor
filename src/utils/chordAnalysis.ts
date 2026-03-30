@@ -342,7 +342,7 @@ export function analyzeChords(
     // Try to detect chord. If full set fails, try subsets (drop notes one at a time
     // starting from the least common pitch classes) to find the best core chord,
     // then label the extra notes as extensions.
-    const { chordName: bestChord, usedPitchClasses } = detectWithFallback(pitchClasses, bassName);
+    const { chordName: bestChord } = detectWithFallback(pitchClasses, bassName);
 
     let root: string | null = null;
     let chordType: string | null = null;
@@ -354,11 +354,27 @@ export function analyzeChords(
       root = parsed.tonic ?? null;
       chordType = parsed.type ?? null;
 
+      // Reinterpret m#5 as major first inversion:
+      // Xm#5 (X, X+3, X+8) = (X+8)major / X
+      // e.g. Am#5 (A,C,F) → F/A, Cm#5 (C,Eb,Ab) → Ab/C
+      if (root && chordType && (chordType.toLowerCase().includes('m#5') || chordType.toLowerCase() === 'augmented minor')) {
+        const rootIdx = PITCH_CLASS_NAMES.indexOf(root);
+        if (rootIdx >= 0) {
+          const majorRoot = PITCH_CLASS_NAMES[(rootIdx + 8) % 12];
+          bass = root;
+          root = majorRoot;
+          chordType = 'major';
+        }
+      }
+
       // Strip any existing slash notation from tonal.js output before adding our own
-      const chordBase = bestChord.includes('/') ? bestChord.split('/')[0] : bestChord;
+      const chordBase = bass ? root : (bestChord.includes('/') ? bestChord.split('/')[0] : bestChord);
 
       // Determine if this is an inversion (bass != root)
-      if (root && bassName !== root) {
+      if (root && bass) {
+        // Already set from m#5 reinterpretation or original detection
+        displayName = `${root}/${bass}`;
+      } else if (root && bassName !== root) {
         bass = bassName;
         displayName = `${chordBase}/${bassName}`;
       } else {
@@ -514,6 +530,143 @@ export function chordToRomanNumeral(
   }
 
   return result;
+}
+
+/**
+ * Resolution type between two consecutive chords.
+ */
+export type ResolutionInfo = {
+  /** Measure where the resolving chord is (the "from" chord) */
+  fromMeasure: number;
+  /** Label to display, e.g. "V→I", "ii→V" */
+  label: string;
+  /** Resolution category for styling */
+  type: 'dominant' | 'predominant' | 'tritone-sub' | 'deceptive';
+};
+
+/**
+ * Detect resolution relationships between consecutive chords.
+ * Purely interval-based — flags any root-down-a-fifth motion
+ * regardless of key function. Catches jazz ii-V-I, secondary dominants, etc.
+ *
+ * Detects:
+ * - Root descends P5 (dominant resolution pattern)
+ * - Root descends semitone + dominant quality (tritone substitution)
+ */
+/** Helper: is this chord type minor-family? */
+function isMinorType(type: string): boolean {
+  const t = type.toLowerCase();
+  return t.includes('minor') || t === 'm' || t === 'm7' || t === 'm9' || t === 'm11' ||
+    (t.startsWith('m') && !t.startsWith('maj'));
+}
+
+/** Helper: is this chord type dominant-family (major/dom7)? */
+function isDominantType(type: string): boolean {
+  const t = type.toLowerCase();
+  return t.includes('dominant') || t === '7' || t === '' || t === 'major' || t.includes('maj');
+}
+
+/** Helper: interval in semitones (ascending) between two pitch class indices */
+function rootInterval(fromIdx: number, toIdx: number): number {
+  return ((toIdx - fromIdx) % 12 + 12) % 12;
+}
+
+export function detectResolutions(
+  chords: ChordInfo[],
+  _keyRoot: number,
+): ResolutionInfo[] {
+  const results: ResolutionInfo[] = [];
+  const validChords = chords.filter((c) => c.root != null && c.chordName != null && c.chordName !== 'N.C.');
+
+  // Track which indices are consumed by ii-V-I (don't double-label as V→I)
+  const consumed = new Set<number>();
+
+  // Pass 1: detect ii-V-I triplets
+  // ii = minor, V = dominant, I = major; each pair root-down-a-fifth
+  for (let i = 0; i < validChords.length - 2; i++) {
+    const ii = validChords[i];
+    const v = validChords[i + 1];
+    const one = validChords[i + 2];
+    if (!ii.root || !v.root || !one.root) continue;
+
+    const iiIdx = PITCH_CLASS_NAMES.indexOf(ii.root);
+    const vIdx = PITCH_CLASS_NAMES.indexOf(v.root);
+    const oneIdx = PITCH_CLASS_NAMES.indexOf(one.root);
+    if (iiIdx < 0 || vIdx < 0 || oneIdx < 0) continue;
+
+    const iiType = (ii.chordType ?? '').toLowerCase();
+    const vType = (v.chordType ?? '').toLowerCase();
+
+    // ii→V: fifth down, ii is minor
+    // V→I: fifth down, V is dominant
+    if (rootInterval(iiIdx, vIdx) === 5 && isMinorType(iiType) &&
+        rootInterval(vIdx, oneIdx) === 5 && isDominantType(vType)) {
+      // Mark both pairs as part of ii-V-I (use 'predominant' color to distinguish from standalone V→I)
+      const iiSuffix = iiType.includes('7') ? '7' : '';
+      const vSuffix = vType.includes('7') || vType.includes('dominant') ? '7' : '';
+      const oneType = (one.chordType ?? '').toLowerCase();
+      const oneIsMinor = isMinorType(oneType);
+      const target = oneIsMinor ? 'i' : 'I';
+      results.push({
+        fromMeasure: ii.measure,
+        label: `ii${iiSuffix}\u2192V`,
+        type: 'predominant',
+      });
+      results.push({
+        fromMeasure: v.measure,
+        label: `V${vSuffix}\u2192${target}`,
+        type: 'predominant',
+      });
+      consumed.add(i);
+      consumed.add(i + 1);
+      i += 1;
+      continue;
+    }
+  }
+
+  // Pass 2: detect remaining pairwise resolutions (skip consumed pairs)
+  for (let i = 0; i < validChords.length - 1; i++) {
+    if (consumed.has(i)) continue;
+
+    const from = validChords[i];
+    const to = validChords[i + 1];
+    if (!from.root || !to.root) continue;
+
+    const fromIdx = PITCH_CLASS_NAMES.indexOf(from.root);
+    const toIdx = PITCH_CLASS_NAMES.indexOf(to.root);
+    if (fromIdx < 0 || toIdx < 0) continue;
+
+    const interval = rootInterval(fromIdx, toIdx);
+    const fromType = (from.chordType ?? '').toLowerCase();
+
+    // Root descends a perfect 5th
+    if (interval === 5) {
+      const minor = isMinorType(fromType);
+      const roman = minor ? 'v' : 'V';
+      const suffix = fromType.includes('7') || fromType.includes('dominant') ? '7' : '';
+      const toType = (to.chordType ?? '').toLowerCase();
+      const target = isMinorType(toType) ? 'i' : 'I';
+      results.push({
+        fromMeasure: from.measure,
+        label: `${roman}${suffix}\u2192${target}`,
+        type: 'dominant',
+      });
+      continue;
+    }
+
+    // Tritone substitution: root descends semitone, dominant-quality
+    if (interval === 11 && isDominantType(fromType)) {
+      const suffix = fromType.includes('7') || fromType.includes('dominant') ? '7' : '';
+      results.push({
+        fromMeasure: from.measure,
+        label: `bII${suffix}\u2192I`,
+        type: 'tritone-sub',
+      });
+      continue;
+    }
+  }
+
+  return results;
 }
 
 /**

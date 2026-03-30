@@ -31,7 +31,7 @@ const DesktopApp: React.FC = () => {
   useEffect(() => {
     // Capture phase: intercept space BEFORE browser activates focused buttons
     const handleKey = (e: KeyboardEvent) => {
-      if (e.key === ' ' && !(e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement)) {
+      if (e.key === ' ' && !(e.target instanceof HTMLInputElement)) {
         e.preventDefault();
         e.stopPropagation();
         togglePlayback();

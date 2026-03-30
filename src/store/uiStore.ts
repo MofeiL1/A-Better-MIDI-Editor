@@ -15,6 +15,7 @@ interface UiStore {
   // Scale display
   scaleRoot: number; // 0-11
   scaleMode: string;
+  scaleAutoDetect: boolean;
 
   // Audio latency (lookAhead in seconds).
   audioLatency: number;
@@ -40,6 +41,7 @@ interface UiStore {
   setIsPlaying: (v: boolean) => void;
   setPlayheadTick: (t: number) => void;
   setScale: (root: number, mode: string) => void;
+  setAutoDetect: (on: boolean) => void;
   setAudioLatency: (v: number) => void;
   setSamplerReady: (v: boolean) => void;
   setClipboard: (notes: Note[]) => void;
@@ -63,6 +65,7 @@ export const useUiStore = create<UiStore>((set) => ({
   playheadTick: 0,
   scaleRoot: 0, // C
   scaleMode: 'major',
+  scaleAutoDetect: true,
   audioLatency: 0.05,
   samplerReady: false,
   clipboard: [],
@@ -87,6 +90,7 @@ export const useUiStore = create<UiStore>((set) => ({
   setIsPlaying: (v) => set({ isPlaying: v }),
   setPlayheadTick: (t) => set({ playheadTick: t }),
   setScale: (root, mode) => set({ scaleRoot: root, scaleMode: mode }),
+  setAutoDetect: (on) => set({ scaleAutoDetect: on }),
   setAudioLatency: (v) => set({ audioLatency: v }),
   setSamplerReady: (v) => set({ samplerReady: v }),
   setClipboard: (notes) => set({ clipboard: notes }),

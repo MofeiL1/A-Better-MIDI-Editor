@@ -1,6 +1,7 @@
 import React, { useRef, useEffect } from 'react';
 import type { Note } from '../../types/model';
-import { pitchClass } from '../../utils/music';
+import type { ResolutionInfo } from '../../utils/chordAnalysis';
+import { pitchClass, getScaleDegreeName } from '../../utils/music';
 import { useUiStore } from '../../store/uiStore';
 
 interface NoteLayerProps {
@@ -18,6 +19,12 @@ interface NoteLayerProps {
   measureChordMap?: Map<number, string>;
   /** Ticks per measure, needed to render chord names at measure positions */
   ticksPerMeasure?: number;
+  /** Scale root (0-11) for scale degree display */
+  scaleRoot?: number;
+  /** Scale mode for scale degree display */
+  scaleMode?: string;
+  /** Resolution relationships between consecutive chords */
+  resolutions?: ResolutionInfo[];
   cursor?: string;
   onMouseDown?: (e: React.MouseEvent<HTMLCanvasElement>) => void;
   onMouseMove?: (e: React.MouseEvent<HTMLCanvasElement>) => void;
@@ -56,6 +63,9 @@ export const NoteLayer: React.FC<NoteLayerProps> = ({
   chordToneMap,
   measureChordMap,
   ticksPerMeasure,
+  scaleRoot,
+  scaleMode,
+  resolutions,
   cursor = 'crosshair',
   onMouseDown,
   onMouseMove,
@@ -93,6 +103,22 @@ export const NoteLayer: React.FC<NoteLayerProps> = ({
         selected.push(note);
       } else {
         unselected.push(note);
+      }
+    }
+
+    // Pre-compute lowest note ID per measure (for bass line degree display)
+    const lowestNotePerMeasure = new Set<string>();
+    if (ticksPerMeasure && ticksPerMeasure > 0) {
+      const measureLowest = new Map<number, { id: string; pitch: number }>();
+      for (const note of notes) {
+        const m = Math.floor(note.startTick / ticksPerMeasure);
+        const cur = measureLowest.get(m);
+        if (!cur || note.pitch < cur.pitch) {
+          measureLowest.set(m, { id: note.id, pitch: note.pitch });
+        }
+      }
+      for (const { id } of measureLowest.values()) {
+        lowestNotePerMeasure.add(id);
       }
     }
 
@@ -166,14 +192,77 @@ export const NoteLayer: React.FC<NoteLayerProps> = ({
         ctx.stroke();
       }
 
-      // Note name label (left side)
+      // Note name + scale degree label (left side)
       if (noteW > 24 && noteH >= 11) {
+        ctx.font = `500 ${Math.min(10, noteH - 3)}px -apple-system, "SF Pro Text", "Helvetica Neue", sans-serif`;
+        const name = NOTE_NAMES[pitchClass(note.pitch)];
+        const toneLabel = chordToneMap?.get(note.id);
+        const degreeStr = (scaleRoot != null)
+          ? getScaleDegreeName(note.pitch, scaleRoot, toneLabel ?? undefined)
+          : '';
+        const isBassNote = lowestNotePerMeasure.has(note.id);
+        const showDegree = degreeStr !== '' && (isSelected || isHovered || isBassNote);
+
+        // Always show note name
         ctx.fillStyle = isSelected
           ? 'rgba(255, 255, 255, 0.9)'
           : 'rgba(255, 255, 255, 0.7)';
-        ctx.font = `500 ${Math.min(10, noteH - 3)}px -apple-system, "SF Pro Text", "Helvetica Neue", sans-serif`;
-        const name = NOTE_NAMES[pitchClass(note.pitch)];
         ctx.fillText(name, noteX + 3, noteY + noteH * 0.45 + 1);
+
+        // Show scale degree with caret (^) above — standard music theory notation
+        if (showDegree && noteW > 36) {
+          const degFontSize = Math.min(9, noteH - 3);
+          ctx.font = `600 ${degFontSize}px -apple-system, "SF Pro Text", "Helvetica Neue", sans-serif`;
+          const degTextWidth = ctx.measureText(degreeStr).width;
+
+          const padX = 3;
+          const padY = 1;
+          const caretSpace = 4;
+          const badgeW = degTextWidth + padX * 2;
+          const badgeH = degFontSize + padY * 2 + caretSpace;
+
+          // Bass notes: badge below the note; others: inside the note next to name
+          let badgeX: number;
+          let badgeY: number;
+          if (isBassNote) {
+            badgeX = noteX + 3;
+            badgeY = noteY + noteH + 2; // below the note
+          } else {
+            ctx.font = `500 ${Math.min(10, noteH - 3)}px -apple-system, "SF Pro Text", "Helvetica Neue", sans-serif`;
+            const nameWidth = ctx.measureText(name).width;
+            badgeX = noteX + 3 + nameWidth + 4;
+            badgeY = noteY + Math.round((noteH - badgeH) / 2);
+          }
+
+          // Background pill
+          ctx.fillStyle = 'rgba(30, 30, 36, 0.8)';
+          ctx.beginPath();
+          ctx.roundRect(badgeX, badgeY, badgeW, badgeH, 3);
+          ctx.fill();
+
+          // Subtle border
+          ctx.strokeStyle = 'rgba(200, 200, 220, 0.3)';
+          ctx.lineWidth = 0.5;
+          ctx.beginPath();
+          ctx.roundRect(badgeX, badgeY, badgeW, badgeH, 3);
+          ctx.stroke();
+
+          // Text color
+          ctx.fillStyle = isSelected
+            ? 'rgba(230, 230, 240, 0.95)'
+            : 'rgba(200, 200, 210, 0.85)';
+
+          // Caret
+          const caretFontSize = Math.max(6, degFontSize - 2);
+          ctx.font = `400 ${caretFontSize}px -apple-system, "SF Pro Text", "Helvetica Neue", sans-serif`;
+          const caretWidth = ctx.measureText('^').width;
+          const caretX = badgeX + padX + (degTextWidth - caretWidth) / 2;
+          ctx.fillText('^', caretX, badgeY + padY + caretFontSize * 0.85);
+
+          // Degree number
+          ctx.font = `600 ${degFontSize}px -apple-system, "SF Pro Text", "Helvetica Neue", sans-serif`;
+          ctx.fillText(degreeStr, badgeX + padX, badgeY + padY + caretSpace + degFontSize * 0.85);
+        }
       }
 
       // Chord tone label — importance-based visual hierarchy
@@ -300,7 +389,70 @@ export const NoteLayer: React.FC<NoteLayerProps> = ({
       ctx.textBaseline = 'alphabetic';
     }
 
-  }, [width, height, scrollX, scrollY, pixelsPerTick, pixelsPerSemitone, notes, selectedNoteIds, velocityDragNoteId, hoveredNoteId, chordToneMap, measureChordMap, ticksPerMeasure]);
+    // Draw resolution labels at end of "from" measure (right-aligned before barline)
+    if (resolutions && resolutions.length > 0 && ticksPerMeasure) {
+      const resFontSize = 10;
+      ctx.textBaseline = 'top';
+
+      for (const res of resolutions) {
+        // Position: end of the "from" measure
+        const measureEndTick = (res.fromMeasure + 1) * ticksPerMeasure;
+        const endX = (measureEndTick - scrollX) * pixelsPerTick;
+        if (endX < -50 || endX > width + 50) continue;
+
+        ctx.font = `600 ${resFontSize}px -apple-system, "SF Pro Text", "Helvetica Neue", sans-serif`;
+        const textW = ctx.measureText(res.label).width;
+        const padX = 4;
+        const padY = 2;
+        const bgW = textW + padX * 2;
+        const bgH = resFontSize + padY * 2;
+        // Right-aligned: pill ends a few px before the barline
+        const bgX = endX - bgW - 4;
+        const bgY = 4;
+
+        // Color by resolution type
+        let borderColor: string;
+        let textColor: string;
+        switch (res.type) {
+          case 'dominant':
+            borderColor = 'rgba(100, 220, 100, 0.6)';
+            textColor = 'rgba(140, 255, 140, 0.95)';
+            break;
+          case 'predominant':
+            borderColor = 'rgba(180, 180, 100, 0.6)';
+            textColor = 'rgba(230, 230, 140, 0.95)';
+            break;
+          case 'tritone-sub':
+            borderColor = 'rgba(220, 120, 255, 0.6)';
+            textColor = 'rgba(230, 160, 255, 0.95)';
+            break;
+          case 'deceptive':
+            borderColor = 'rgba(255, 160, 80, 0.6)';
+            textColor = 'rgba(255, 190, 120, 0.95)';
+            break;
+        }
+
+        // Background pill (same style as chord names)
+        ctx.fillStyle = 'rgba(30, 30, 36, 0.85)';
+        ctx.beginPath();
+        ctx.roundRect(bgX, bgY, bgW, bgH, 4);
+        ctx.fill();
+
+        // Border
+        ctx.strokeStyle = borderColor;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.roundRect(bgX, bgY, bgW, bgH, 4);
+        ctx.stroke();
+
+        // Text
+        ctx.fillStyle = textColor;
+        ctx.fillText(res.label, bgX + padX, bgY + padY);
+      }
+      ctx.textBaseline = 'alphabetic';
+    }
+
+  }, [width, height, scrollX, scrollY, pixelsPerTick, pixelsPerSemitone, notes, selectedNoteIds, velocityDragNoteId, hoveredNoteId, chordToneMap, measureChordMap, ticksPerMeasure, scaleRoot, scaleMode, resolutions]);
 
   return (
     <canvas

@@ -61,6 +61,19 @@
 - [x] 钢琴键 Shift+拖选改为范围模式（起始→当前 pitch 连续范围，反向缩小，不再 toggle 抖动）
 - [x] 钢琴键选区操作纳入 undo（beginDrag/endDrag 包裹整个手势）
 
+### 2026-03-30 完成（第四批）
+
+- [x] 空格键修复：移除 HTMLSelectElement 豁免 + 所有 select 加 tabIndex={-1}，空格始终触发播放
+- [x] Auto Key Detection：72 候选调暴力评分（fitScore + tonic chord 验证），默认 Auto 模式
+- [x] Confirm Key 按钮：锁定检测到的调性，方便在确定调上继续创作
+- [x] 音阶级数标注（^记号）：相对大调音阶的级数，带升降号（b3, #4, b7 等），和弦上下文消歧
+- [x] Bass line 级数常驻显示：每小节最低音始终在音符下方显示级数 badge
+- [x] 和弦解决关系检测：纯根音运动分析（五度下行 → V→I，三全音替代 → bII→I），ii-V-I 三连检测
+- [x] m#5 → 大三转位：Am#5 自动识别为 F/A 等
+- [x] Modifier 临时工具切换：Pencil+Shift → Pointer，Pointer+Ctrl/Cmd → Pencil
+- [x] Pencil 模式有选中音符时点击空白处取消选择（而非画新音符），光标跟随状态变化
+- [x] 铅笔光标 SVG 图标
+
 ## 当前在做
 
 （无 — 等待用户反馈）

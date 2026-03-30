@@ -31,6 +31,18 @@ As a musician, I always felt like the tools in mainstream DAWs weren't quite the
 - **Interactive piano keyboard** — Hold to audition, drag for glissando, click to select all notes at a pitch. Labels follow the selected key.
 - **可交互的钢琴键盘** — 按住试听，拖动刮奏，点击选中同音高音符，标签跟随所选调式。
 
+- **Auto key detection** — Detects the most likely key from your notes. Scores 72 candidates (12 roots x 6 modes) by note coverage and tonic chord presence. One-click confirm to lock.
+- **自动调性检测** — 根据已有音符自动检测最可能的调性。对 72 个候选调（12 个根音 x 6 种调式）打分，参考音符覆盖率和主和弦存在性。一键确认锁定。
+
+- **Chord analysis & resolution detection** — Per-measure chord detection with passing tone filtering, chord-tone badges (R, 3, 5, 7...), Roman numeral analysis, and resolution arrows (V-I, ii-V-I, tritone substitution).
+- **和弦分析与解决关系检测** — 按小节检测和弦（过滤经过音），和弦内音标签（R, 3, 5, 7...），Roman numeral 分析，解决关系箭头（V-I、ii-V-I、三全音替代）。
+
+- **Scale degree notation** — Standard caret (^) notation showing degrees relative to the major scale with accidentals. Bass notes always display their degree below the note.
+- **音阶级数标注** — 标准 ^ 记号，相对大调音阶显示级数及升降号。最低音始终在音符下方显示级数。
+
+- **Modifier tool switching** — Hold Shift in Pencil mode for temporary Pointer; hold Ctrl/Cmd in Pointer mode for temporary Pencil. Cursor updates in real time.
+- **修饰键临时工具切换** — Pencil 模式按住 Shift 临时切为 Pointer；Pointer 模式按住 Ctrl/Cmd 临时切为 Pencil。光标实时跟随。
+
 ## Shortcuts / 快捷键
 
 | Key / 按键 | Action / 功能 |
@@ -44,6 +56,8 @@ As a musician, I always felt like the tools in mainstream DAWs weren't quite the
 | Delete / Backspace | Delete selected 删除选中 |
 | Escape | Clear selection 清除选区 |
 | Shift+单击 Click | Add to selection 加选 |
+| Shift (Pencil mode) | Temporary Pointer tool 临时切换为指针工具 |
+| Ctrl/Cmd (Pointer mode) | Temporary Pencil tool 临时切换为画笔工具 |
 | 鼠标中键按住拖动 Hold Middle Mouse | Joystick pan — speed follows distance from origin 摇杆式平移，速度随离原点距离变化 |
 | Ctrl+滚轮 Scroll | Zoom (centered on playhead) 缩放（以播放头为中心） |
 | Shift+滚轮 Scroll | Horizontal scroll 水平滚动 |
@@ -59,7 +73,6 @@ React 18, TypeScript, Vite, Zustand, Tone.js, Canvas. No backend.
 - **Smart Snap / 智能吸附** — Snap resolution adapts to mouse drag speed. [Design doc / 设计文档](TASKS.md)
 - **智能吸附** — Snap 粒度随鼠标拖拽速度自适应。
 - Chord velocity visualization / 和弦内力度分布可视化
-- Editable BPM & key signature / 可编辑 BPM 和调号
 
 ## Future Outlook / 未来展望
 

@@ -33,7 +33,7 @@ const selectStyle: React.CSSProperties = {
 };
 
 export const Toolbar: React.FC = () => {
-  const { tool, setTool, snapDivision, setSnapDivision, scaleRoot, scaleMode, setScale } = useUiStore();
+  const { tool, setTool, snapDivision, setSnapDivision, scaleRoot, scaleMode, scaleAutoDetect, setScale, setAutoDetect } = useUiStore();
 
   return (
     <div
@@ -81,6 +81,7 @@ export const Toolbar: React.FC = () => {
       {/* Snap */}
       <span style={{ color: '#777', fontSize: 10, fontWeight: 500 }}>Snap</span>
       <select
+        tabIndex={-1}
         value={snapDivision}
         onChange={(e) => setSnapDivision(Number(e.target.value) as SnapResolution)}
         style={selectStyle}
@@ -96,23 +97,63 @@ export const Toolbar: React.FC = () => {
       {/* Scale selector */}
       <span style={{ color: '#777', fontSize: 10, fontWeight: 500 }}>Key</span>
       <select
-        value={scaleRoot}
-        onChange={(e) => setScale(Number(e.target.value), scaleMode)}
+        tabIndex={-1}
+        value={scaleAutoDetect ? -1 : scaleRoot}
+        onChange={(e) => {
+          const v = Number(e.target.value);
+          if (v === -1) {
+            setAutoDetect(true);
+          } else {
+            setAutoDetect(false);
+            setScale(v, scaleMode);
+          }
+        }}
         style={selectStyle}
       >
+        <option value={-1}>Auto{scaleAutoDetect ? ` (${NOTE_NAMES[scaleRoot]})` : ''}</option>
         {NOTE_NAMES.map((name, i) => (
           <option key={i} value={i}>{name}</option>
         ))}
       </select>
       <select
+        tabIndex={-1}
         value={scaleMode}
-        onChange={(e) => setScale(scaleRoot, e.target.value)}
-        style={selectStyle}
+        onChange={(e) => {
+          if (scaleAutoDetect) setAutoDetect(false);
+          setScale(scaleRoot, e.target.value);
+        }}
+        style={{
+          ...selectStyle,
+          ...(scaleAutoDetect ? { color: '#777', fontStyle: 'italic' } : {}),
+        }}
+        disabled={scaleAutoDetect}
       >
         {Object.keys(SCALE_PATTERNS).map((mode) => (
           <option key={mode} value={mode}>{mode}</option>
         ))}
       </select>
+      {scaleAutoDetect && (
+        <button
+          tabIndex={-1}
+          onClick={() => setAutoDetect(false)}
+          title="Lock detected key"
+          style={{
+            padding: '2px 6px',
+            backgroundColor: '#3a6b3a',
+            color: '#cfc',
+            border: '1px solid #4a8a4a',
+            borderRadius: 3,
+            fontSize: 10,
+            fontWeight: 600,
+            fontFamily: 'inherit',
+            cursor: 'pointer',
+            outline: 'none',
+            marginLeft: 2,
+          }}
+        >
+          Confirm
+        </button>
+      )}
     </div>
   );
 };

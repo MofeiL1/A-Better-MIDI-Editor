@@ -9,13 +9,17 @@ import { useProjectStore } from '../../store/projectStore';
 import { useUiStore } from '../../store/uiStore';
 import { usePreviewNote } from '../../hooks/usePreviewNote';
 import { pixelToTick, yToPitch, snapTick, getSnapTicksFromDivision, tickToPixel, tickToSeconds } from '../../utils/timing';
-import { buildChordToneMap, buildMeasureChordMap } from '../../utils/chordAnalysis';
+import { analyzeChords, buildChordToneMap, buildMeasureChordMap, detectResolutions } from '../../utils/chordAnalysis';
+import { detectKey } from '../../utils/keyDetection';
 import type { Note } from '../../types/model';
 
 const DEFAULT_VEL_HEIGHT = 80;
 const MIN_VEL_HEIGHT = 30;
 const MAX_VEL_HEIGHT = 300;
 const VEL_RESIZE_HANDLE = 4;
+// Pencil cursor: 16x16 SVG encoded as data URI, hotspot at bottom-left (1,15)
+const PENCIL_CURSOR = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16'%3E%3Cpath d='M12.1 1.3a1.2 1.2 0 0 1 1.7 0l.9.9a1.2 1.2 0 0 1 0 1.7L5.5 13.1 1.5 14.5l1.4-4L12.1 1.3z' fill='%23ccc' stroke='%23666' stroke-width='.5'/%3E%3Cpath d='M11.2 2.2l2.6 2.6' stroke='%23999' stroke-width='.5' fill='none'/%3E%3C/svg%3E") 1 15, crosshair`;
+
 const PIANO_KEY_WIDTH = 56;
 const MIN_ZOOM_X = 0.05;
 const MAX_ZOOM_X = 2;
@@ -28,9 +32,10 @@ export const PianoRoll: React.FC = () => {
   const canvasRect = useRef<DOMRect | null>(null);
   const [size, setSize] = useState({ width: 800, height: 500 });
   const [velHeight, setVelHeight] = useState(DEFAULT_VEL_HEIGHT);
-  const [cursor, setCursor] = useState<string>('crosshair');
+  const [cursor, setCursor] = useState<string>(PENCIL_CURSOR);
   const [selectBox, setSelectBox] = useState<SelectBox>(null);
   const [drawingNoteId, setDrawingNoteId] = useState<string | null>(null);
+  const [modifierKeys, setModifierKeys] = useState<{ shift: boolean; cmdCtrl: boolean }>({ shift: false, cmdCtrl: false });
 
   const project = useProjectStore((s) => s.project);
   const addNote = useProjectStore((s) => s.addNote);
@@ -47,9 +52,9 @@ export const PianoRoll: React.FC = () => {
   const {
     tool, viewport, selectedNoteIds, snapDivision,
     activeClipId, playheadTick, isPlaying,
-    scaleRoot,
+    scaleRoot, scaleMode, scaleAutoDetect,
     setViewport, setSelectedNoteIds, clearSelection,
-    setActiveClip, setActiveTrack, setPlayheadTick,
+    setActiveClip, setActiveTrack, setPlayheadTick, setScale,
   } = useUiStore();
 
   const scrollX = viewport.scrollX;
@@ -84,6 +89,35 @@ export const PianoRoll: React.FC = () => {
     setSize({ width: containerSize.width, height: Math.max(50, gridHeight) });
   }, [containerSize, velHeight]);
 
+  // Track modifier keys for temporary tool switching
+  // Pencil + Shift → Pointer; Pointer + Ctrl/Cmd → Pencil
+  const isMac = navigator.platform.toUpperCase().includes('MAC');
+  useEffect(() => {
+    const update = (e: KeyboardEvent) => {
+      setModifierKeys({
+        shift: e.shiftKey,
+        cmdCtrl: isMac ? e.metaKey : e.ctrlKey,
+      });
+    };
+    const onBlur = () => setModifierKeys({ shift: false, cmdCtrl: false });
+    window.addEventListener('keydown', update);
+    window.addEventListener('keyup', update);
+    window.addEventListener('blur', onBlur);
+    return () => {
+      window.removeEventListener('keydown', update);
+      window.removeEventListener('keyup', update);
+      window.removeEventListener('blur', onBlur);
+    };
+  }, [isMac]);
+
+  // Compute effective tool: modifier keys temporarily override base tool
+  // Mid-drag safety: drag handlers use dragState.type, not tool, so switching is harmless
+  const effectiveTool = (() => {
+    if (tool === 'draw' && modifierKeys.shift) return 'select' as const;
+    if (tool === 'select' && modifierKeys.cmdCtrl) return 'draw' as const;
+    return tool;
+  })();
+
   const activeClip = project.tracks
     .flatMap((t) => t.clips)
     .find((c) => c.id === activeClipId);
@@ -103,9 +137,34 @@ export const PianoRoll: React.FC = () => {
     [notes, project.ticksPerBeat, tsNum, tsDen, drawingNoteId],
   );
 
+  // Chord analysis for key detection (without Roman numerals — those need scaleRoot which may change)
+  const chordsForKeyDetect = useMemo(
+    () => analyzeChords(notes, project.ticksPerBeat, tsNum, tsDen),
+    [notes, project.ticksPerBeat, tsNum, tsDen],
+  );
+
+  // Auto key detection
+  const detectedKey = useMemo(
+    () => detectKey(notes, chordsForKeyDetect),
+    [notes, chordsForKeyDetect],
+  );
+
+  // Drive scaleRoot/scaleMode when auto-detect is on
+  useEffect(() => {
+    if (scaleAutoDetect && detectedKey) {
+      setScale(detectedKey.root, detectedKey.mode);
+    }
+  }, [scaleAutoDetect, detectedKey, setScale]);
+
   const measureChordMap = useMemo(
     () => buildMeasureChordMap(notes, project.ticksPerBeat, tsNum, tsDen, scaleRoot),
     [notes, project.ticksPerBeat, tsNum, tsDen, scaleRoot],
+  );
+
+  // Resolution detection (V→I, ii→V, tritone sub, etc.)
+  const resolutions = useMemo(
+    () => detectResolutions(chordsForKeyDetect, scaleRoot),
+    [chordsForKeyDetect, scaleRoot],
   );
 
   // drag type extended with trim-start and draw-resize
@@ -222,7 +281,7 @@ export const PianoRoll: React.FC = () => {
       };
       document.addEventListener('mouseup', globalMouseUp);
 
-      if (tool === 'draw') {
+      if (effectiveTool === 'draw') {
         const hit = hitTestNote(mx, my);
         if (hit) {
           beginDrag();
@@ -247,6 +306,9 @@ export const PianoRoll: React.FC = () => {
               lastPitch: notePitch,
             };
           }
+        } else if (selectedNoteIds.size > 0) {
+          // In pencil mode, clicking empty space with selection → deselect first
+          clearSelection();
         } else {
           // beginDrag first so addNote skips its own pushUndo — the whole gesture is one undo step
           beginDrag();
@@ -272,7 +334,7 @@ export const PianoRoll: React.FC = () => {
             lastPitch: clampedPitch,
           };
         }
-      } else if (tool === 'select') {
+      } else if (effectiveTool === 'select') {
         const hit = hitTestNote(mx, my);
         if (hit) {
           beginDrag();
@@ -307,12 +369,12 @@ export const PianoRoll: React.FC = () => {
           dragState.current = { type: 'select-box', startX: mx, startY: my };
           setSelectBox({ x1: mx, y1: my, x2: mx, y2: my });
         }
-      } else if (tool === 'erase') {
+      } else if (effectiveTool === 'erase') {
         const hit = hitTestNote(mx, my);
         if (hit) deleteNotes(activeClipId, [hit.note.id]);
       }
     },
-    [tool, activeClipId, ppt, pps, scrollX, scrollY, size.height, snapTicks, notes, selectedNoteIds, hitTestNote, addNote, drawEditNote, beginDrag, clearSelection, deleteNotes, setSelectedNoteIds, previewNote]
+    [effectiveTool, activeClipId, ppt, pps, scrollX, scrollY, size.height, snapTicks, notes, selectedNoteIds, hitTestNote, addNote, drawEditNote, beginDrag, clearSelection, deleteNotes, setSelectedNoteIds, previewNote]
   );
 
   const handleMouseMove = useCallback(
@@ -329,9 +391,11 @@ export const PianoRoll: React.FC = () => {
         if (hit?.zone === 'resize' || hit?.zone === 'trim-start') {
           setCursor('ew-resize');
         } else if (hit) {
-          setCursor(tool === 'erase' ? 'not-allowed' : 'grab');
+          setCursor(effectiveTool === 'erase' ? 'not-allowed' : 'grab');
         } else {
-          setCursor(tool === 'draw' ? 'crosshair' : 'default');
+          // In draw mode with selection, empty space click will deselect → show default cursor
+          const drawButWillDeselect = effectiveTool === 'draw' && selectedNoteIds.size > 0;
+          setCursor(effectiveTool === 'draw' && !drawButWillDeselect ? PENCIL_CURSOR : 'default');
         }
         return;
       }
@@ -408,11 +472,11 @@ export const PianoRoll: React.FC = () => {
         }
       }
     },
-    [activeClipId, ppt, pps, scrollX, scrollY, size.height, snapTicks, selectedNoteIds, notes, drawEditNote, moveNotes, resizeNotes, trimNoteStart, hitTestNote, tool, previewNote]
+    [activeClipId, ppt, pps, scrollX, scrollY, size.height, snapTicks, selectedNoteIds, notes, drawEditNote, moveNotes, resizeNotes, trimNoteStart, hitTestNote, effectiveTool, previewNote]
   );
 
   const handleMouseLeave = useCallback(() => {
-    setCursor('crosshair');
+    setCursor(effectiveTool === 'draw' ? PENCIL_CURSOR : 'default');
     useUiStore.getState().setHoveredNoteId(null);
   }, []);
 
@@ -532,6 +596,9 @@ export const PianoRoll: React.FC = () => {
             chordToneMap={chordToneMap}
             measureChordMap={measureChordMap}
             ticksPerMeasure={ticksPerMeasure}
+            scaleRoot={scaleRoot}
+            scaleMode={scaleMode}
+            resolutions={resolutions}
             cursor={cursor}
             onMouseDown={handleMouseDown}
             onMouseMove={handleMouseMove}
