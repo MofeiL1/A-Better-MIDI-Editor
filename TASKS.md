@@ -73,6 +73,9 @@
 - [x] Modifier 临时工具切换：Pencil+Shift → Pointer，Pointer+Ctrl/Cmd → Pencil
 - [x] Pencil 模式有选中音符时点击空白处取消选择（而非画新音符），光标跟随状态变化
 - [x] 铅笔光标 SVG 图标
+- [x] Zoom Slider：工具栏右侧 9 档位离散缩放滑条（放大镜 +/- 图标），默认 0.125 居中，以播放头为锚点
+- [x] 默认 Demo 项目：16 小节爵士和弦进行（ii-V-I、tritone sub、次属和弦、modal interchange）
+- [x] 和弦标签拆分为两行：上行 Roman numeral（大、亮），下行和弦名（小、暗），顶部一行只有功能分析更干净
 
 ## 当前在做
 
