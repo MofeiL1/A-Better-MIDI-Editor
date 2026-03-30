@@ -72,7 +72,7 @@ React 18, TypeScript, Vite, Zustand, Tone.js, Canvas. No backend.
 - **Melody Analysis & Variation Management / 旋律分析与变奏管理** — Automatic motif and phrase structure recognition. A variation tree that lets you save multiple versions of the same passage and switch between them for comparison. Built-in transformation helpers: inversion, retrograde, rhythmic augmentation/diminution, and more.
 - **旋律分析与变奏管理** — 自动识别旋律动机与乐句结构。变奏版本树，对同一段旋律保存多个变奏，随时切换对比。内置变奏手法辅助：倒影、逆行、节奏扩大/缩小等。
 
-> **No Generative AI / 不使用生成式 AI** — This project does not include and will never incorporate generative AI features. We will never use unauthorized music from others in development. This is a tool that empowers creators — not one that replaces them.
+> **No Generative AI / 不包含生成式 AI 功能** — This project does not include and will never incorporate generative AI features. We will never use unauthorized music from others in development. This is a tool that empowers creators — not one that replaces them.
 >
 > 本项目不包含、未来也不会加入生成式人工智能功能。制作过程中绝不使用未经授权的他人音乐。这是一个赋能创作者的工具，而不是替代创作者的工具。
 
