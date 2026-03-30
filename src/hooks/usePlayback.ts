@@ -8,54 +8,66 @@ export function usePlayback() {
   const synthRef = useRef<Tone.PolySynth | null>(null);
   const animRef = useRef<number>(0);
   const startTickRef = useRef(0);
+  const isPlayingRef = useRef(false);
 
   const getSynth = useCallback(() => {
     if (!synthRef.current) {
       synthRef.current = new Tone.PolySynth(Tone.Synth, {
         oscillator: { type: 'triangle' },
-        envelope: { attack: 0.02, decay: 0.1, sustain: 0.3, release: 0.4 },
-        volume: -8,
+        envelope: { attack: 0.01, decay: 0.15, sustain: 0.4, release: 0.3 },
       }).toDestination();
+      synthRef.current.volume.value = -6;
     }
     return synthRef.current;
   }, []);
 
   const play = useCallback(async () => {
+    // Ensure AudioContext is running (required by browsers on user gesture)
     await Tone.start();
+
     const synth = getSynth();
     const { project } = useProjectStore.getState();
     const { activeClipId, playheadTick, setIsPlaying, setPlayheadTick } = useUiStore.getState();
 
     const clip = project.tracks.flatMap((t) => t.clips).find((c) => c.id === activeClipId);
-    if (!clip) return;
+    if (!clip || clip.notes.length === 0) return;
 
     const bpm = project.tempoChanges[0]?.bpm ?? 120;
     const tpb = project.ticksPerBeat;
 
-    Tone.getTransport().bpm.value = bpm;
-    Tone.getTransport().cancel();
+    // Reset transport
+    const transport = Tone.getTransport();
+    transport.stop();
+    transport.cancel();
+    transport.bpm.value = bpm;
+    transport.position = 0;
 
     startTickRef.current = playheadTick;
     const startOffset = tickToSeconds(playheadTick, bpm, tpb);
 
-    // Schedule notes
+    // Schedule all notes
     for (const note of clip.notes) {
       const noteStartSec = tickToSeconds(note.startTick, bpm, tpb) - startOffset;
-      const noteDurSec = tickToSeconds(note.duration, bpm, tpb);
+      const noteDurSec = Math.max(0.05, tickToSeconds(note.duration, bpm, tpb));
       if (noteStartSec < 0) continue;
 
       const freq = Tone.Frequency(note.pitch, 'midi').toFrequency();
-      Tone.getTransport().schedule(() => {
-        synth.triggerAttackRelease(freq, noteDurSec, undefined, note.velocity / 127);
+      const vel = Math.max(0.01, note.velocity / 127);
+
+      // The `time` param from schedule() is the precise AudioContext time — pass it through
+      transport.schedule((time) => {
+        synth.triggerAttackRelease(freq, noteDurSec, time, vel);
       }, noteStartSec);
     }
 
-    Tone.getTransport().start();
+    transport.start();
+    isPlayingRef.current = true;
     setIsPlaying(true);
 
     // Animate playhead
     const startTime = Tone.now();
     const tick = () => {
+      if (!isPlayingRef.current) return;
       const elapsed = Tone.now() - startTime;
       const currentTick = startTickRef.current + (elapsed / 60) * bpm * tpb;
       setPlayheadTick(Math.round(currentTick));
@@ -65,6 +77,7 @@ export function usePlayback() {
   }, [getSynth]);
 
   const stop = useCallback(() => {
+    isPlayingRef.current = false;
     Tone.getTransport().stop();
     Tone.getTransport().cancel();
     cancelAnimationFrame(animRef.current);
@@ -72,16 +85,16 @@ export function usePlayback() {
   }, []);
 
   const togglePlayback = useCallback(() => {
-    if (useUiStore.getState().isPlaying) {
+    if (isPlayingRef.current) {
       stop();
     } else {
       play();
     }
   }, [play, stop]);
 
-  // Cleanup
   useEffect(() => {
     return () => {
+      isPlayingRef.current = false;
       cancelAnimationFrame(animRef.current);
       synthRef.current?.dispose();
     };
