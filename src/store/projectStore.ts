@@ -5,11 +5,76 @@ import { useUiStore } from './uiStore';
 
 const MAX_UNDO = 50;
 
+/**
+ * Generate demo notes: 16-bar jazz chord progression in C major.
+ * Showcases chord analysis, ii-V-I detection, tritone sub, secondary dominants,
+ * scale degree notation, and resolution arrows.
+ *
+ * Progression:
+ *  1. Cmaj7    (I)
+ *  2. Bm7b5   (vii)
+ *  3. E7      (V/vi — secondary dominant)
+ *  4. Am7     (vi — V→i resolution)
+ *  5. Dm7     (ii — start of ii-V-I)
+ *  6. G7      (V — ii→V)
+ *  7. Cmaj7   (I — V→I)
+ *  8. C7      (I7 — dominant of IV)
+ *  9. Fmaj7   (IV — V→I from C7)
+ * 10. Fm7     (iv — modal interchange)
+ * 11. Em7     (iii)
+ * 12. A7      (V/ii — secondary dominant)
+ * 13. Dm7     (ii — V→I from A7)
+ * 14. Db7     (tritone sub of G7!)
+ * 15. Cmaj7   (I — bII→I resolution!)
+ * 16. G7      (V — turnaround)
+ */
+function generateDemoNotes(): Note[] {
+  const TPB = 480; // ticks per beat
+  const BAR = TPB * 4; // ticks per bar (4/4)
+  const DUR = BAR; // whole-note duration
+
+  // Each chord: [barIndex, pitches[]]
+  const chords: [number, number[]][] = [
+    [0,  [48, 52, 55, 59]],  // Cmaj7:  C3 E3 G3 B3
+    [1,  [47, 50, 53, 57]],  // Bm7b5:  B2 D3 F3 A3
+    [2,  [52, 56, 59, 62]],  // E7:     E3 G#3 B3 D4
+    [3,  [45, 48, 52, 55]],  // Am7:    A2 C3 E3 G3
+    [4,  [50, 53, 57, 60]],  // Dm7:    D3 F3 A3 C4
+    [5,  [43, 47, 50, 53]],  // G7:     G2 B2 D3 F3
+    [6,  [48, 52, 55, 59]],  // Cmaj7:  C3 E3 G3 B3
+    [7,  [48, 52, 55, 58]],  // C7:     C3 E3 G3 Bb3
+    [8,  [53, 57, 60, 64]],  // Fmaj7:  F3 A3 C4 E4
+    [9,  [53, 56, 60, 63]],  // Fm7:    F3 Ab3 C4 Eb4
+    [10, [52, 55, 59, 62]],  // Em7:    E3 G3 B3 D4
+    [11, [45, 49, 52, 55]],  // A7:     A2 C#3 E3 G3
+    [12, [50, 53, 57, 60]],  // Dm7:    D3 F3 A3 C4
+    [13, [49, 53, 56, 59]],  // Db7:    Db3 F3 Ab3 B3
+    [14, [48, 52, 55, 59]],  // Cmaj7:  C3 E3 G3 B3
+    [15, [43, 47, 50, 53]],  // G7:     G2 B2 D3 F3
+  ];
+
+  const notes: Note[] = [];
+  for (const [bar, pitches] of chords) {
+    for (const pitch of pitches) {
+      notes.push({
+        id: generateId(),
+        pitch,
+        startTick: bar * BAR,
+        duration: DUR,
+        velocity: 80,
+        channel: 0,
+        pitchBend: [],
+      });
+    }
+  }
+  return notes;
+}
+
 function createDefaultProject(): Project {
   const trackId = generateId();
   const clipId = generateId();
   return {
-    name: 'Untitled',
+    name: 'Jazz Demo',
     ticksPerBeat: 480,
     tracks: [
       {
@@ -20,7 +85,7 @@ function createDefaultProject(): Project {
           {
             id: clipId,
             startTick: 0,
-            notes: [],
+            notes: generateDemoNotes(),
           },
         ],
         muted: false,
