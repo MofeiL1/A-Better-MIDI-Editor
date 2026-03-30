@@ -66,9 +66,9 @@ export const MobileNoteCanvas: React.FC<MobileNoteCanvasProps> = ({
       const inScale = isInScale(pitch, scaleRoot, scaleMode);
       const isRoot = pitchClass(pitch) === pitchClass(scaleRoot);
 
-      if (isRoot) ctx.fillStyle = 'rgba(255, 190, 60, 0.05)';
-      else if (inScale) ctx.fillStyle = isBlack ? 'rgba(120, 200, 140, 0.015)' : 'rgba(120, 200, 140, 0.035)';
-      else ctx.fillStyle = isBlack ? 'rgba(0, 0, 0, 0.15)' : 'rgba(255, 255, 255, 0.01)';
+      if (isRoot) ctx.fillStyle = 'rgba(255, 190, 60, 0.08)';
+      else if (inScale) ctx.fillStyle = isBlack ? 'rgba(120, 200, 140, 0.03)' : 'rgba(120, 200, 140, 0.06)';
+      else ctx.fillStyle = isBlack ? 'rgba(0, 0, 0, 0.2)' : 'rgba(255, 255, 255, 0.01)';
       ctx.fillRect(0, y, width, pps);
 
       // Horizontal line
@@ -152,22 +152,6 @@ export const MobileNoteCanvas: React.FC<MobileNoteCanvasProps> = ({
       }
     }
 
-    // ─── Piano key labels on left edge ────────────────────
-    for (let i = -1; i <= visiblePitches; i++) {
-      const pitch = scrollY + i;
-      if (pitch < 0 || pitch > 127) continue;
-      const y = height - (pitch - scrollY + 1) * pps;
-      const isRoot = pitchClass(pitch) === pitchClass(scaleRoot);
-      const isC = pitchClass(pitch) === 0;
-
-      if (isC || isRoot) {
-        const octave = Math.floor(pitch / 12) - 1;
-        const noteName = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'][pitchClass(pitch)];
-        ctx.fillStyle = isRoot ? 'rgba(255,200,80,0.7)' : 'rgba(255,255,255,0.35)';
-        ctx.font = `${isRoot ? 600 : 400} 9px Inter, -apple-system, sans-serif`;
-        ctx.fillText(`${noteName}${octave}`, 3, y + pps - 3);
-      }
-    }
   }, [width, height, scrollX, scrollY, pixelsPerTick, pixelsPerSemitone, ticksPerBeat, numerator, notes, selectedNoteIds, scaleRoot, scaleMode]);
 
   return (

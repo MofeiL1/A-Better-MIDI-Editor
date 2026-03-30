@@ -1,5 +1,6 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import { MobileNoteCanvas } from './MobileNoteCanvas';
+import { MobilePianoKeys, KEY_WIDTH } from './MobilePianoKeys';
 import { useProjectStore } from '../../store/projectStore';
 import { useUiStore } from '../../store/uiStore';
 import { pixelToTick, yToPitch, snapTick, getSnapTicksFromDivision, tickToPixel } from '../../utils/timing';
@@ -262,49 +263,63 @@ export const MobilePianoRoll: React.FC<{ editMode: boolean }> = ({ editMode }) =
     touchState.current = { type: 'none', lastX: 0, lastY: 0, pinchDist: 0, pinchPpt: 0, startX: 0, startY: 0 };
   }, []);
 
+  const canvasWidth = Math.max(0, size.width - KEY_WIDTH);
   const playheadX = tickToPixel(playheadTick, ppt, scrollX);
-  const showPlayhead = playheadX >= 0 && playheadX <= size.width;
+  const showPlayhead = playheadX >= 0 && playheadX <= canvasWidth;
 
   return (
     <div
       ref={containerRef}
       style={{
         flex: 1,
-        position: 'relative',
+        display: 'flex',
         overflow: 'hidden',
         backgroundColor: '#1a1a1c',
         borderTop: editMode ? '2px solid rgba(255, 180, 50, 0.6)' : '2px solid transparent',
         transition: 'border-color 0.2s ease',
       }}
-      onTouchStart={handleTouchStart}
-      onTouchMove={handleTouchMove}
-      onTouchEnd={handleTouchEnd}
     >
-      <MobileNoteCanvas
-        width={size.width}
-        height={size.height}
-        scrollX={scrollX}
+      {/* Fixed piano key column */}
+      <MobilePianoKeys
         scrollY={scrollY}
-        pixelsPerTick={ppt}
         pixelsPerSemitone={pps}
-        ticksPerBeat={project.ticksPerBeat}
-        numerator={ts.numerator}
-        notes={notes}
-        selectedNoteIds={selectedNoteIds}
+        canvasHeight={size.height}
         scaleRoot={scaleRoot}
         scaleMode={scaleMode}
       />
-      {showPlayhead && (
-        <div style={{
-          position: 'absolute',
-          top: 0,
-          left: playheadX,
-          width: 1.5,
-          height: '100%',
-          backgroundColor: isPlaying ? 'rgba(255, 100, 80, 0.8)' : 'rgba(255,255,255,0.25)',
-          pointerEvents: 'none',
-        }} />
-      )}
+      {/* Scrollable canvas area */}
+      <div
+        style={{ position: 'relative', flex: 1, overflow: 'hidden', touchAction: 'none' }}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+      >
+        <MobileNoteCanvas
+          width={canvasWidth}
+          height={size.height}
+          scrollX={scrollX}
+          scrollY={scrollY}
+          pixelsPerTick={ppt}
+          pixelsPerSemitone={pps}
+          ticksPerBeat={project.ticksPerBeat}
+          numerator={ts.numerator}
+          notes={notes}
+          selectedNoteIds={selectedNoteIds}
+          scaleRoot={scaleRoot}
+          scaleMode={scaleMode}
+        />
+        {showPlayhead && (
+          <div style={{
+            position: 'absolute',
+            top: 0,
+            left: playheadX,
+            width: 1.5,
+            height: '100%',
+            backgroundColor: isPlaying ? 'rgba(255, 100, 80, 0.8)' : 'rgba(255,255,255,0.25)',
+            pointerEvents: 'none',
+          }} />
+        )}
+      </div>
     </div>
   );
 };
