@@ -3,6 +3,6 @@ import react from '@vitejs/plugin-react'
 
 // https://vite.dev/config/
 export default defineConfig({
-  base: '/a-better-midi-editor/',
+  base: '/A-Better-MIDI-Editor/',
   plugins: [react()],
 })
