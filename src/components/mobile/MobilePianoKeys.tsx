@@ -1,4 +1,4 @@
-import React, { useRef, useEffect } from 'react';
+import React, { useMemo } from 'react';
 import { pitchToNoteName, isInScale, isRoot, pitchClass } from '../../utils/music';
 
 const BLACK_KEYS = new Set([1, 3, 6, 8, 10]);
@@ -13,8 +13,8 @@ interface MobilePianoKeysProps {
 }
 
 /**
- * Fixed left-side piano key strip for mobile.
- * Uses canvas for flicker-free rendering synced to the grid.
+ * DOM-based piano key column — no canvas, no flicker.
+ * Each pitch row is a positioned div.
  */
 export const MobilePianoKeys: React.FC<MobilePianoKeysProps> = ({
   scrollY,
@@ -23,78 +23,87 @@ export const MobilePianoKeys: React.FC<MobilePianoKeysProps> = ({
   scaleRoot,
   scaleMode,
 }) => {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const pps = pixelsPerSemitone;
+  const visibleCount = Math.ceil(canvasHeight / pps) + 2;
 
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas || canvasHeight <= 0) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+  const rows = useMemo(() => {
+    const result: React.ReactNode[] = [];
 
-    const dpr = window.devicePixelRatio || 1;
-    canvas.width = KEY_WIDTH * dpr;
-    canvas.height = canvasHeight * dpr;
-    ctx.scale(dpr, dpr);
-    ctx.clearRect(0, 0, KEY_WIDTH, canvasHeight);
-
-    const pps = pixelsPerSemitone;
-    const visiblePitches = Math.ceil(canvasHeight / pps) + 2;
-
-    for (let i = -1; i <= visiblePitches; i++) {
-      const pitch = scrollY + i;
+    for (let i = -1; i <= visibleCount; i++) {
+      const pitch = Math.floor(scrollY) + i;
       if (pitch < 0 || pitch > 127) continue;
 
-      const y = canvasHeight - (pitch - scrollY + 1) * pps;
+      // Fractional scroll offset
+      const frac = scrollY - Math.floor(scrollY);
+      const y = canvasHeight - (pitch - Math.floor(scrollY) + 1 - frac) * pps;
+
       const isBlack = BLACK_KEYS.has(pitchClass(pitch));
       const inScale = isInScale(pitch, scaleRoot, scaleMode);
       const rootNote = isRoot(pitch, scaleRoot);
       const isC = pitchClass(pitch) === 0;
-
-      // Background
-      if (rootNote) ctx.fillStyle = '#332d1e';
-      else if (inScale) ctx.fillStyle = isBlack ? '#1e2220' : '#262e28';
-      else ctx.fillStyle = isBlack ? '#161618' : '#222224';
-      ctx.fillRect(0, y, KEY_WIDTH, pps);
-
-      // Border
-      ctx.strokeStyle = isC ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.03)';
-      ctx.lineWidth = isC ? 1 : 0.5;
-      ctx.beginPath();
-      ctx.moveTo(0, y + pps);
-      ctx.lineTo(KEY_WIDTH, y + pps);
-      ctx.stroke();
-
-      // Label
       const showLabel = isC || rootNote;
-      if (showLabel && pps >= 8) {
-        const name = pitchToNoteName(pitch);
-        ctx.fillStyle = rootNote ? 'rgba(255, 200, 80, 0.9)' : 'rgba(255, 255, 255, 0.5)';
-        ctx.font = `${rootNote ? '600' : '400'} ${Math.min(11, pps - 2)}px Inter, -apple-system, sans-serif`;
-        ctx.textAlign = 'right';
-        ctx.fillText(name, KEY_WIDTH - 4, y + pps / 2 + 4);
-        ctx.textAlign = 'left';
-      }
 
-      // In-scale dot for non-labeled keys
-      if (!showLabel && inScale && pps >= 6) {
-        ctx.fillStyle = rootNote ? 'rgba(255,200,80,0.4)' : 'rgba(120,200,140,0.3)';
-        ctx.beginPath();
-        ctx.arc(KEY_WIDTH - 6, y + pps / 2, 2, 0, Math.PI * 2);
-        ctx.fill();
-      }
+      let bg = isBlack ? '#161618' : '#222224';
+      if (rootNote) bg = '#332d1e';
+      else if (inScale) bg = isBlack ? '#1e2220' : '#262e28';
+
+      result.push(
+        <div
+          key={pitch}
+          style={{
+            position: 'absolute',
+            top: y,
+            left: 0,
+            width: KEY_WIDTH,
+            height: pps,
+            backgroundColor: bg,
+            borderBottom: `${isC ? 1 : 0.5}px solid ${isC ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.03)'}`,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'flex-end',
+            paddingRight: 4,
+            boxSizing: 'border-box',
+          }}
+        >
+          {showLabel && pps >= 8 && (
+            <span style={{
+              fontSize: Math.min(11, pps - 2),
+              fontWeight: rootNote ? 600 : 400,
+              color: rootNote ? 'rgba(255, 200, 80, 0.9)' : 'rgba(255, 255, 255, 0.5)',
+              letterSpacing: -0.3,
+              lineHeight: 1,
+            }}>
+              {pitchToNoteName(pitch)}
+            </span>
+          )}
+          {!showLabel && inScale && pps >= 6 && (
+            <div style={{
+              width: 4,
+              height: 4,
+              borderRadius: 2,
+              backgroundColor: 'rgba(120, 200, 140, 0.3)',
+              marginRight: 2,
+            }} />
+          )}
+        </div>
+      );
     }
-  }, [scrollY, pixelsPerSemitone, canvasHeight, scaleRoot, scaleMode]);
+    return result;
+  }, [scrollY, pps, canvasHeight, scaleRoot, scaleMode, visibleCount]);
 
   return (
-    <canvas
-      ref={canvasRef}
-      style={{
-        width: KEY_WIDTH,
-        height: canvasHeight,
-        flexShrink: 0,
-        borderRight: '1px solid rgba(255,255,255,0.06)',
-      }}
-    />
+    <div style={{
+      position: 'relative',
+      width: KEY_WIDTH,
+      height: canvasHeight,
+      flexShrink: 0,
+      overflow: 'hidden',
+      borderRight: '1px solid rgba(255,255,255,0.06)',
+      userSelect: 'none',
+      WebkitUserSelect: 'none',
+    }}>
+      {rows}
+    </div>
   );
 };
 

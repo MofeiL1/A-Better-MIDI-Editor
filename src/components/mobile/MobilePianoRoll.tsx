@@ -182,6 +182,13 @@ export const MobilePianoRoll: React.FC<{ editMode: boolean }> = ({ editMode }) =
     e.preventDefault();
     const ts = touchState.current;
 
+    // Read latest viewport from store (not stale closure)
+    const vp = useUiStore.getState().viewport;
+    const curScrollX = vp.scrollX;
+    const curScrollY = vp.scrollY;
+    const curPpt = vp.pixelsPerTick;
+    const curPps = vp.pixelsPerSemitone;
+
     // Pinch zoom + pan
     if (ts.type === 'pinch' && e.touches.length === 2) {
       const t1 = e.touches[0], t2 = e.touches[1];
@@ -197,8 +204,8 @@ export const MobilePianoRoll: React.FC<{ editMode: boolean }> = ({ editMode }) =
 
       setViewport({
         pixelsPerTick: newPpt,
-        scrollX: Math.max(0, scrollX - dx / newPpt),
-        scrollY: Math.max(0, Math.min(115, scrollY + dy / pps)),
+        scrollX: Math.max(0, curScrollX - dx / newPpt),
+        scrollY: Math.max(0, Math.min(115, curScrollY + dy / curPps)),
       });
 
       ts.lastX = midX;
@@ -215,8 +222,8 @@ export const MobilePianoRoll: React.FC<{ editMode: boolean }> = ({ editMode }) =
       const dx = tx - ts.lastX;
       const dy = ty - ts.lastY;
       setViewport({
-        scrollX: Math.max(0, scrollX - dx / ppt),
-        scrollY: Math.max(0, Math.min(115, scrollY + dy / pps)),
+        scrollX: Math.max(0, curScrollX - dx / curPpt),
+        scrollY: Math.max(0, Math.min(115, curScrollY + dy / curPps)),
       });
       ts.lastX = tx;
       ts.lastY = ty;
@@ -226,10 +233,10 @@ export const MobilePianoRoll: React.FC<{ editMode: boolean }> = ({ editMode }) =
     if (ts.type === 'edit-move' && ts.noteId && activeClipId) {
       const dx = tx - ts.startX;
       const dy = ty - ts.startY;
-      const deltaTick = snapTick(dx / ppt, snapTickVal);
-      const deltaPitch = -Math.round(dy / pps);
+      const deltaTick = snapTick(dx / curPpt, snapTickVal);
+      const deltaPitch = -Math.round(dy / curPps);
       if (deltaTick !== 0 || deltaPitch !== 0) {
-        const ids = selectedNoteIds.has(ts.noteId) ? Array.from(selectedNoteIds) : [ts.noteId];
+        const ids = useUiStore.getState().selectedNoteIds.has(ts.noteId) ? Array.from(useUiStore.getState().selectedNoteIds) : [ts.noteId];
         moveNotes(activeClipId, ids, deltaTick, deltaPitch);
         ts.startX = tx;
         ts.startY = ty;
@@ -238,14 +245,14 @@ export const MobilePianoRoll: React.FC<{ editMode: boolean }> = ({ editMode }) =
 
     if (ts.type === 'edit-resize' && ts.noteId && activeClipId) {
       const dx = tx - ts.startX;
-      const delta = snapTick(dx / ppt, snapTickVal);
+      const delta = snapTick(dx / curPpt, snapTickVal);
       if (delta !== 0) {
-        const ids = selectedNoteIds.has(ts.noteId) ? Array.from(selectedNoteIds) : [ts.noteId];
+        const ids = useUiStore.getState().selectedNoteIds.has(ts.noteId) ? Array.from(useUiStore.getState().selectedNoteIds) : [ts.noteId];
         resizeNotes(activeClipId, ids, delta);
         ts.startX = tx;
       }
     }
-  }, [activeClipId, ppt, pps, scrollX, scrollY, snapTickVal, selectedNoteIds, setViewport, moveNotes, resizeNotes]);
+  }, [activeClipId, snapTickVal, setViewport, moveNotes, resizeNotes]);
 
   const handleTouchEnd = useCallback((e: React.TouchEvent) => {
     e.preventDefault();

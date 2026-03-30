@@ -44,9 +44,15 @@ export const MobileNoteCanvas: React.FC<MobileNoteCanvasProps> = ({
     if (!ctx) return;
 
     const dpr = window.devicePixelRatio || 1;
-    canvas.width = width * dpr;
-    canvas.height = height * dpr;
-    ctx.scale(dpr, dpr);
+    const targetW = Math.round(width * dpr);
+    const targetH = Math.round(height * dpr);
+
+    // Only resize backing store when dimensions actually change (avoids flash)
+    if (canvas.width !== targetW || canvas.height !== targetH) {
+      canvas.width = targetW;
+      canvas.height = targetH;
+    }
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, width, height);
 
     // Background
