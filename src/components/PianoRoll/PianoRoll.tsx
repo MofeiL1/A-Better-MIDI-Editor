@@ -408,7 +408,10 @@ export const PianoRoll: React.FC = () => {
       } else if (e.shiftKey) {
         setViewport({ scrollX: Math.max(0, scrollX + e.deltaY / ppt) });
       } else {
-        setViewport({ scrollY: Math.max(0, Math.min(115, scrollY - e.deltaY / pps)) });
+        // Handle both deltaX (horizontal) and deltaY (vertical) for trackpad two-finger scroll
+        const newScrollX = Math.max(0, scrollX + e.deltaX / ppt);
+        const newScrollY = Math.max(0, Math.min(115, scrollY - e.deltaY / pps));
+        setViewport({ scrollX: newScrollX, scrollY: newScrollY });
       }
     },
     [ppt, pps, scrollX, scrollY, playheadTick, setViewport]

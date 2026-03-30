@@ -37,14 +37,18 @@ As a musician, I always felt like the tools in mainstream DAWs weren't quite the
 |-----|--------|
 | 空格 Space | Play / Stop 播放/停止 |
 | 1 / 2 / 3 | Pointer / Pencil / Eraser 指针/画笔/橡皮 |
-| Ctrl+Z / Y | Undo / Redo 撤销/重做 |
-| Ctrl+C / V | Copy / Paste at playhead 复制/粘贴 |
-| Delete | Delete selected 删除选中 |
+| Ctrl/Cmd+Z | Undo 撤销 |
+| Ctrl/Cmd+Shift+Z 或 Ctrl+Y | Redo 重做 |
+| Ctrl/Cmd+C / V | Copy / Paste at playhead 复制/粘贴 |
+| Ctrl/Cmd+A | Select all 全选 |
+| Delete / Backspace | Delete selected 删除选中 |
+| Escape | Clear selection 清除选区 |
 | Shift+单击 Click | Add to selection 加选 |
-| 鼠标中键 Middle Mouse | Pan 平移 |
-| Ctrl+滚轮 Scroll | Zoom 缩放 |
+| 鼠标中键按住拖动 Hold Middle Mouse | Joystick pan — speed follows distance from origin 摇杆式平移，速度随离原点距离变化 |
+| Ctrl+滚轮 Scroll | Zoom (centered on playhead) 缩放（以播放头为中心） |
 | Shift+滚轮 Scroll | Horizontal scroll 水平滚动 |
 | 滚轮 Scroll | Vertical scroll 垂直滚动 |
+| 触控板两指滑动 Trackpad | Pan in any direction 任意方向平移 |
 
 ## Tech / 技术栈
 
