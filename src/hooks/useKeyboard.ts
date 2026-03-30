@@ -9,7 +9,7 @@ export function useKeyboard() {
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      const { tool, setTool, selectedNoteIds, clearSelection, activeClipId } = useUiStore.getState();
+      const { setTool, selectedNoteIds, clearSelection, activeClipId } = useUiStore.getState();
 
       // Tool switching
       if (e.key === '1') { setTool('select'); return; }

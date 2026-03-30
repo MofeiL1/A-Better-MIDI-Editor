@@ -5,16 +5,33 @@ import { PianoKeys } from './PianoKeys';
 import { VelocityLane } from './VelocityLane';
 import { useProjectStore } from '../../store/projectStore';
 import { useUiStore } from '../../store/uiStore';
-import { pixelToTick, yToPitch, snapTick, getSnapTicksFromDivision } from '../../utils/timing';
-import { generateId } from '../../utils/id';
+import { pixelToTick, yToPitch, snapTick, getSnapTicksFromDivision, tickToPixel } from '../../utils/timing';
 import type { Note } from '../../types/model';
 
 const VELOCITY_LANE_HEIGHT = 80;
+const PIANO_KEY_WIDTH = 56;
 const MIN_ZOOM_X = 0.05;
 const MAX_ZOOM_X = 2;
 
+// ─── Helpers: unified pointer coords from mouse or touch ────
+
+function getPointerPos(
+  e: React.MouseEvent | React.TouchEvent | MouseEvent | TouchEvent,
+  canvas: HTMLElement,
+): { x: number; y: number } | null {
+  const rect = canvas.getBoundingClientRect();
+  if ('touches' in e) {
+    const t = e.touches[0] ?? (e as TouchEvent).changedTouches?.[0];
+    if (!t) return null;
+    return { x: t.clientX - rect.left, y: t.clientY - rect.top };
+  }
+  const me = e as MouseEvent | React.MouseEvent;
+  return { x: me.clientX - rect.left, y: me.clientY - rect.top };
+}
+
 export const PianoRoll: React.FC = () => {
   const containerRef = useRef<HTMLDivElement>(null);
+  const canvasAreaRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ width: 800, height: 500 });
 
   const project = useProjectStore((s) => s.project);
@@ -26,7 +43,7 @@ export const PianoRoll: React.FC = () => {
 
   const {
     tool, viewport, selectedNoteIds, snapDivision,
-    activeClipId, scaleRoot, scaleMode,
+    activeClipId, scaleRoot, scaleMode, playheadTick, isPlaying,
     setViewport, setSelectedNoteIds, clearSelection,
     setActiveClip, setActiveTrack,
   } = useUiStore();
@@ -36,13 +53,13 @@ export const PianoRoll: React.FC = () => {
   const ppt = viewport.pixelsPerTick;
   const pps = viewport.pixelsPerSemitone;
 
-  // Auto-select first clip if none active
+  // Auto-select first clip
   useEffect(() => {
     if (!activeClipId && project.tracks.length > 0 && project.tracks[0].clips.length > 0) {
       setActiveTrack(project.tracks[0].id);
       setActiveClip(project.tracks[0].clips[0].id);
     }
-  }, [activeClipId, project.tracks]);
+  }, [activeClipId, project.tracks, setActiveTrack, setActiveClip]);
 
   // ResizeObserver
   useEffect(() => {
@@ -56,7 +73,7 @@ export const PianoRoll: React.FC = () => {
     return () => obs.disconnect();
   }, []);
 
-  // Get active clip notes
+  // Active clip notes
   const activeClip = project.tracks
     .flatMap((t) => t.clips)
     .find((c) => c.id === activeClipId);
@@ -65,15 +82,19 @@ export const PianoRoll: React.FC = () => {
   const snapTicks = getSnapTicksFromDivision(snapDivision, project.ticksPerBeat);
   const ts = project.timeSignatureChanges[0] ?? { numerator: 4 };
 
-  // ─── Mouse interaction state ────────────────────────────
+  // ─── Interaction state ──────────────────────────────────
+
   const dragState = useRef<{
-    type: 'none' | 'draw' | 'move' | 'resize' | 'select-box';
+    type: 'none' | 'draw' | 'move' | 'resize' | 'select-box' | 'scroll';
     startX: number;
     startY: number;
     noteId?: string;
-    origTick?: number;
-    origPitch?: number;
-    origDuration?: number;
+    // For two-finger pinch zoom
+    startDist?: number;
+    startPpt?: number;
+    // For scroll
+    scrollStartX?: number;
+    scrollStartY?: number;
   }>({ type: 'none', startX: 0, startY: 0 });
 
   const hitTestNote = useCallback(
@@ -84,7 +105,7 @@ export const PianoRoll: React.FC = () => {
         const nw = n.duration * ppt;
         const ny = size.height - (n.pitch - scrollY + 1) * pps;
         if (mx >= nx && mx <= nx + nw && my >= ny && my <= ny + pps) {
-          const isResize = mx >= nx + nw - 6;
+          const isResize = mx >= nx + nw - 10; // Wider hit zone for touch
           return { note: n, isResize };
         }
       }
@@ -93,12 +114,38 @@ export const PianoRoll: React.FC = () => {
     [notes, scrollX, scrollY, ppt, pps, size.height]
   );
 
-  const handleMouseDown = useCallback(
-    (e: React.MouseEvent<HTMLCanvasElement>) => {
+  // ─── Unified pointer handlers ───────────────────────────
+
+  const handlePointerDown = useCallback(
+    (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
       if (!activeClipId) return;
-      const rect = e.currentTarget.getBoundingClientRect();
-      const mx = e.clientX - rect.left;
-      const my = e.clientY - rect.top;
+      const target = e.currentTarget;
+
+      // Two-finger touch = scroll/zoom
+      if ('touches' in e && e.touches.length === 2) {
+        e.preventDefault();
+        const t1 = e.touches[0];
+        const t2 = e.touches[1];
+        const dist = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
+        const midX = (t1.clientX + t2.clientX) / 2;
+        const midY = (t1.clientY + t2.clientY) / 2;
+        dragState.current = {
+          type: 'scroll',
+          startX: midX,
+          startY: midY,
+          startDist: dist,
+          startPpt: ppt,
+          scrollStartX: scrollX,
+          scrollStartY: scrollY,
+        };
+        return;
+      }
+
+      const pos = getPointerPos(e, target);
+      if (!pos) return;
+      const { x: mx, y: my } = pos;
+
+      if ('touches' in e) e.preventDefault();
 
       const tick = pixelToTick(mx, ppt, scrollX);
       const pitch = yToPitch(my, pps, scrollY, size.height);
@@ -107,35 +154,14 @@ export const PianoRoll: React.FC = () => {
         const hit = hitTestNote(mx, my);
         if (hit) {
           if (hit.isResize) {
-            dragState.current = {
-              type: 'resize',
-              startX: mx,
-              startY: my,
-              noteId: hit.note.id,
-              origDuration: hit.note.duration,
-            };
+            dragState.current = { type: 'resize', startX: mx, startY: my, noteId: hit.note.id };
           } else {
-            // Start move
             if (!selectedNoteIds.has(hit.note.id)) {
-              if (e.shiftKey) {
-                const next = new Set(selectedNoteIds);
-                next.add(hit.note.id);
-                setSelectedNoteIds(next);
-              } else {
-                setSelectedNoteIds(new Set([hit.note.id]));
-              }
+              setSelectedNoteIds(new Set([hit.note.id]));
             }
-            dragState.current = {
-              type: 'move',
-              startX: mx,
-              startY: my,
-              noteId: hit.note.id,
-              origTick: hit.note.startTick,
-              origPitch: hit.note.pitch,
-            };
+            dragState.current = { type: 'move', startX: mx, startY: my, noteId: hit.note.id };
           }
         } else {
-          // Draw new note
           const snappedTick = snapTick(tick, snapTicks);
           addNote(activeClipId, {
             pitch: Math.min(127, Math.max(0, pitch)),
@@ -152,30 +178,12 @@ export const PianoRoll: React.FC = () => {
         const hit = hitTestNote(mx, my);
         if (hit) {
           if (hit.isResize) {
-            dragState.current = {
-              type: 'resize',
-              startX: mx,
-              startY: my,
-              noteId: hit.note.id,
-              origDuration: hit.note.duration,
-            };
+            dragState.current = { type: 'resize', startX: mx, startY: my, noteId: hit.note.id };
           } else {
-            if (e.shiftKey) {
-              const next = new Set(selectedNoteIds);
-              if (next.has(hit.note.id)) next.delete(hit.note.id);
-              else next.add(hit.note.id);
-              setSelectedNoteIds(next);
-            } else if (!selectedNoteIds.has(hit.note.id)) {
+            if (!selectedNoteIds.has(hit.note.id)) {
               setSelectedNoteIds(new Set([hit.note.id]));
             }
-            dragState.current = {
-              type: 'move',
-              startX: mx,
-              startY: my,
-              noteId: hit.note.id,
-              origTick: hit.note.startTick,
-              origPitch: hit.note.pitch,
-            };
+            dragState.current = { type: 'move', startX: mx, startY: my, noteId: hit.note.id };
           }
         } else {
           clearSelection();
@@ -188,20 +196,50 @@ export const PianoRoll: React.FC = () => {
         }
       }
     },
-    [tool, activeClipId, ppt, pps, scrollX, scrollY, size.height, snapTicks, notes, selectedNoteIds, hitTestNote]
+    [tool, activeClipId, ppt, pps, scrollX, scrollY, size.height, snapTicks, notes, selectedNoteIds, hitTestNote, addNote, clearSelection, deleteNotes, setSelectedNoteIds]
   );
 
-  const handleMouseMove = useCallback(
-    (e: React.MouseEvent<HTMLCanvasElement>) => {
+  const handlePointerMove = useCallback(
+    (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
       if (!activeClipId) return;
       const ds = dragState.current;
       if (ds.type === 'none') return;
 
-      const rect = e.currentTarget.getBoundingClientRect();
-      const mx = e.clientX - rect.left;
-      const my = e.clientY - rect.top;
+      // Two-finger scroll/zoom
+      if (ds.type === 'scroll' && 'touches' in e && e.touches.length === 2) {
+        e.preventDefault();
+        const t1 = e.touches[0];
+        const t2 = e.touches[1];
+        const dist = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
+        const midX = (t1.clientX + t2.clientX) / 2;
+        const midY = (t1.clientY + t2.clientY) / 2;
+
+        // Pinch zoom
+        if (ds.startDist && ds.startPpt) {
+          const scale = dist / ds.startDist;
+          const newPpt = Math.max(MIN_ZOOM_X, Math.min(MAX_ZOOM_X, ds.startPpt * scale));
+          setViewport({ pixelsPerTick: newPpt });
+        }
+
+        // Pan
+        const dx = midX - ds.startX;
+        const dy = midY - ds.startY;
+        if (ds.scrollStartX !== undefined && ds.scrollStartY !== undefined) {
+          setViewport({
+            scrollX: Math.max(0, ds.scrollStartX - dx / ppt),
+            scrollY: Math.max(0, Math.min(115, ds.scrollStartY + dy / pps)),
+          });
+        }
+        return;
+      }
+
+      const pos = getPointerPos(e, e.currentTarget);
+      if (!pos) return;
+      const { x: mx, y: my } = pos;
       const dx = mx - ds.startX;
       const dy = my - ds.startY;
+
+      if ('touches' in e) e.preventDefault();
 
       if (ds.type === 'move' && ds.noteId) {
         const deltaTick = snapTick(dx / ppt, snapTicks);
@@ -225,58 +263,55 @@ export const PianoRoll: React.FC = () => {
         }
       }
     },
-    [activeClipId, ppt, pps, snapTicks, selectedNoteIds]
+    [activeClipId, ppt, pps, snapTicks, selectedNoteIds, moveNotes, resizeNotes, setViewport]
   );
 
-  const handleMouseUp = useCallback(
-    (e: React.MouseEvent<HTMLCanvasElement>) => {
+  const handlePointerUp = useCallback(
+    (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
       if (!activeClipId) return;
       const ds = dragState.current;
 
       if (ds.type === 'select-box') {
-        const rect = e.currentTarget.getBoundingClientRect();
-        const mx = e.clientX - rect.left;
-        const my = e.clientY - rect.top;
-        const x1 = Math.min(ds.startX, mx);
-        const x2 = Math.max(ds.startX, mx);
-        const y1 = Math.min(ds.startY, my);
-        const y2 = Math.max(ds.startY, my);
+        const pos = getPointerPos(e, e.currentTarget);
+        if (pos) {
+          const x1 = Math.min(ds.startX, pos.x);
+          const x2 = Math.max(ds.startX, pos.x);
+          const y1 = Math.min(ds.startY, pos.y);
+          const y2 = Math.max(ds.startY, pos.y);
 
-        const selected = new Set<string>();
-        for (const n of notes) {
-          const nx = (n.startTick - scrollX) * ppt;
-          const nw = n.duration * ppt;
-          const ny = size.height - (n.pitch - scrollY + 1) * pps;
-          if (nx + nw >= x1 && nx <= x2 && ny + pps >= y1 && ny <= y2) {
-            selected.add(n.id);
+          const selected = new Set<string>();
+          for (const n of notes) {
+            const nx = (n.startTick - scrollX) * ppt;
+            const nw = n.duration * ppt;
+            const ny = size.height - (n.pitch - scrollY + 1) * pps;
+            if (nx + nw >= x1 && nx <= x2 && ny + pps >= y1 && ny <= y2) {
+              selected.add(n.id);
+            }
           }
+          setSelectedNoteIds(selected);
         }
-        setSelectedNoteIds(selected);
       }
 
       dragState.current = { type: 'none', startX: 0, startY: 0 };
     },
-    [activeClipId, notes, scrollX, scrollY, ppt, pps, size.height]
+    [activeClipId, notes, scrollX, scrollY, ppt, pps, size.height, setSelectedNoteIds]
   );
 
-  // Scroll/zoom handling
+  // Wheel scroll/zoom (desktop)
   const handleWheel = useCallback(
     (e: React.WheelEvent) => {
       e.preventDefault();
       if (e.ctrlKey || e.metaKey) {
-        // Zoom X
         const factor = e.deltaY > 0 ? 0.9 : 1.1;
         const newPpt = Math.max(MIN_ZOOM_X, Math.min(MAX_ZOOM_X, ppt * factor));
         setViewport({ pixelsPerTick: newPpt });
       } else if (e.shiftKey) {
-        // Scroll X
         setViewport({ scrollX: Math.max(0, scrollX + e.deltaY / ppt) });
       } else {
-        // Scroll Y
         setViewport({ scrollY: Math.max(0, Math.min(115, scrollY - e.deltaY / pps)) });
       }
     },
-    [ppt, pps, scrollX, scrollY]
+    [ppt, pps, scrollX, scrollY, setViewport]
   );
 
   const handleVelocityChange = useCallback(
@@ -284,10 +319,14 @@ export const PianoRoll: React.FC = () => {
       if (!activeClipId) return;
       setNoteVelocity(activeClipId, [noteId], velocity);
     },
-    [activeClipId]
+    [activeClipId, setNoteVelocity]
   );
 
-  const gridWidth = size.width - 60; // minus piano keys width
+  const gridWidth = size.width - PIANO_KEY_WIDTH;
+
+  // Playhead position
+  const playheadX = tickToPixel(playheadTick, ppt, scrollX);
+  const showPlayhead = playheadX >= 0 && playheadX <= gridWidth;
 
   return (
     <div
@@ -296,7 +335,7 @@ export const PianoRoll: React.FC = () => {
         flex: 1,
         display: 'flex',
         flexDirection: 'column',
-        backgroundColor: '#1e1e1e',
+        backgroundColor: '#1a1a1c',
         overflow: 'hidden',
       }}
     >
@@ -309,7 +348,8 @@ export const PianoRoll: React.FC = () => {
           scaleMode={scaleMode}
         />
         <div
-          style={{ position: 'relative', flex: 1, overflow: 'hidden' }}
+          ref={canvasAreaRef}
+          style={{ position: 'relative', flex: 1, overflow: 'hidden', touchAction: 'none' }}
           onWheel={handleWheel}
         >
           <Grid
@@ -335,14 +375,32 @@ export const PianoRoll: React.FC = () => {
             selectedNoteIds={selectedNoteIds}
             scaleRoot={scaleRoot}
             scaleMode={scaleMode}
-            onMouseDown={handleMouseDown}
-            onMouseMove={handleMouseMove}
-            onMouseUp={handleMouseUp}
+            onMouseDown={handlePointerDown}
+            onMouseMove={handlePointerMove}
+            onMouseUp={handlePointerUp}
+            onTouchStart={handlePointerDown}
+            onTouchMove={handlePointerMove}
+            onTouchEnd={handlePointerUp}
           />
+          {/* Playhead */}
+          {showPlayhead && (
+            <div
+              style={{
+                position: 'absolute',
+                top: 0,
+                left: playheadX,
+                width: 1.5,
+                height: size.height,
+                backgroundColor: isPlaying ? 'rgba(255, 100, 80, 0.8)' : 'rgba(255, 255, 255, 0.3)',
+                pointerEvents: 'none',
+                transition: isPlaying ? 'none' : 'left 0.05s ease',
+              }}
+            />
+          )}
         </div>
       </div>
       <div style={{ display: 'flex' }}>
-        <div style={{ width: 60, flexShrink: 0 }} />
+        <div style={{ width: PIANO_KEY_WIDTH, flexShrink: 0 }} />
         <VelocityLane
           width={gridWidth}
           height={VELOCITY_LANE_HEIGHT}

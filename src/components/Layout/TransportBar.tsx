@@ -1,5 +1,7 @@
 import React, { useRef } from 'react';
 import { useProjectStore } from '../../store/projectStore';
+import { useUiStore } from '../../store/uiStore';
+import { usePlayback } from '../../hooks/usePlayback';
 import { importMidi, exportMidi } from '../../utils/midi';
 
 const pill: React.CSSProperties = {
@@ -27,7 +29,10 @@ export const TransportBar: React.FC = () => {
   const setTempo = useProjectStore((s) => s.setTempo);
   const undo = useProjectStore((s) => s.undo);
   const redo = useProjectStore((s) => s.redo);
+  const isPlaying = useUiStore((s) => s.isPlaying);
+  const setPlayheadTick = useUiStore((s) => s.setPlayheadTick);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const { togglePlayback, stop } = usePlayback();
 
   const bpm = project.tempoChanges[0]?.bpm ?? 120;
 
@@ -53,6 +58,11 @@ export const TransportBar: React.FC = () => {
     URL.revokeObjectURL(url);
   };
 
+  const handleStop = () => {
+    stop();
+    setPlayheadTick(0);
+  };
+
   return (
     <div
       style={{
@@ -71,10 +81,44 @@ export const TransportBar: React.FC = () => {
         fontWeight: 600,
         color: 'rgba(255, 255, 255, 0.9)',
         letterSpacing: -0.2,
-        marginRight: 8,
+        marginRight: 4,
       }}>
         {project.name}
       </span>
+
+      {/* Divider */}
+      <div style={{ width: 1, height: 20, backgroundColor: 'rgba(255, 255, 255, 0.06)' }} />
+
+      {/* Playback controls */}
+      <div style={{ display: 'flex', gap: 2 }}>
+        <button
+          onClick={handleStop}
+          title="停止"
+          style={{
+            ...pill,
+            padding: '5px 10px',
+            fontSize: 14,
+          }}
+        >
+          ⏹
+        </button>
+        <button
+          onClick={togglePlayback}
+          title={isPlaying ? '暂停 (Space)' : '播放 (Space)'}
+          style={{
+            ...pill,
+            padding: '5px 10px',
+            fontSize: 14,
+            backgroundColor: isPlaying ? 'rgba(255, 100, 80, 0.2)' : 'rgba(255, 255, 255, 0.06)',
+            borderColor: isPlaying ? 'rgba(255, 100, 80, 0.3)' : 'rgba(255, 255, 255, 0.08)',
+          }}
+        >
+          {isPlaying ? '⏸' : '▶'}
+        </button>
+      </div>
+
+      {/* Divider */}
+      <div style={{ width: 1, height: 20, backgroundColor: 'rgba(255, 255, 255, 0.06)' }} />
 
       {/* BPM */}
       <div style={{

@@ -67,7 +67,7 @@ export async function importMidi(file: File): Promise<Project> {
  */
 export function exportMidi(project: Project): Blob {
   const midi = new Midi();
-  midi.header.ppq = project.ticksPerBeat;
+  (midi.header as unknown as Record<string, unknown>).ppq = project.ticksPerBeat;
 
   // Set tempo
   for (const tc of project.tempoChanges) {
@@ -100,5 +100,6 @@ export function exportMidi(project: Project): Blob {
     }
   }
 
-  return new Blob([midi.toArray()], { type: 'audio/midi' });
+  const arr = midi.toArray();
+  return new Blob([new Uint8Array(arr)], { type: 'audio/midi' });
 }

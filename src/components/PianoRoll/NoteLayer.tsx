@@ -13,9 +13,12 @@ interface NoteLayerProps {
   selectedNoteIds: Set<string>;
   scaleRoot: number;
   scaleMode: string;
-  onMouseDown?: (e: React.MouseEvent<HTMLCanvasElement>) => void;
-  onMouseMove?: (e: React.MouseEvent<HTMLCanvasElement>) => void;
-  onMouseUp?: (e: React.MouseEvent<HTMLCanvasElement>) => void;
+  onMouseDown?: (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => void;
+  onMouseMove?: (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => void;
+  onMouseUp?: (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => void;
+  onTouchStart?: (e: React.TouchEvent<HTMLCanvasElement>) => void;
+  onTouchMove?: (e: React.TouchEvent<HTMLCanvasElement>) => void;
+  onTouchEnd?: (e: React.TouchEvent<HTMLCanvasElement>) => void;
 }
 
 function velocityToColor(velocity: number, selected: boolean, inScale: boolean): string {
@@ -50,6 +53,9 @@ export const NoteLayer: React.FC<NoteLayerProps> = ({
   onMouseDown,
   onMouseMove,
   onMouseUp,
+  onTouchStart,
+  onTouchMove,
+  onTouchEnd,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -137,6 +143,9 @@ export const NoteLayer: React.FC<NoteLayerProps> = ({
       onMouseDown={onMouseDown}
       onMouseMove={onMouseMove}
       onMouseUp={onMouseUp}
+      onTouchStart={onTouchStart}
+      onTouchMove={onTouchMove}
+      onTouchEnd={onTouchEnd}
     />
   );
 };

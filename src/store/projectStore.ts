@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Project, Note, Clip, Track, ProjectSnapshot } from '../types/model';
+import type { Project, Note, ProjectSnapshot } from '../types/model';
 import { generateId } from '../utils/id';
 
 const MAX_UNDO = 50;
@@ -38,15 +38,6 @@ function createDefaultProject(): Project {
 function cloneProjectState(project: Project): Omit<Project, 'history' | 'redoStack'> {
   const { history: _, redoStack: __, ...rest } = project;
   return JSON.parse(JSON.stringify(rest));
-}
-
-function findClip(project: Project, clipId: string): Clip | undefined {
-  for (const track of project.tracks) {
-    for (const clip of track.clips) {
-      if (clip.id === clipId) return clip;
-    }
-  }
-  return undefined;
 }
 
 interface ProjectStore {
