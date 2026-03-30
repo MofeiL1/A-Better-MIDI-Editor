@@ -32,8 +32,16 @@ const selectStyle: React.CSSProperties = {
   colorScheme: 'dark',
 };
 
+// Discrete zoom levels — 0.125 (default) at exact center (index 4)
+const ZOOM_LEVELS = [0.03, 0.05, 0.07, 0.09, 0.125, 0.2, 0.4, 0.8, 2.0];
 export const Toolbar: React.FC = () => {
   const { tool, setTool, snapDivision, setSnapDivision, scaleRoot, scaleMode, scaleAutoDetect, setScale, setAutoDetect } = useUiStore();
+  const viewport = useUiStore((s) => s.viewport);
+  const setViewport = useUiStore((s) => s.setViewport);
+
+  // Find closest zoom level index for current pixelsPerTick
+  const currentZoomIndex = ZOOM_LEVELS.reduce((best, level, i) =>
+    Math.abs(level - viewport.pixelsPerTick) < Math.abs(ZOOM_LEVELS[best] - viewport.pixelsPerTick) ? i : best, 0);
 
   return (
     <div
@@ -154,6 +162,52 @@ export const Toolbar: React.FC = () => {
           Confirm
         </button>
       )}
+
+      {/* Spacer — push zoom slider to the right */}
+      <div style={{ flex: 1 }} />
+
+      {/* Zoom slider */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+        {/* Zoom out icon (small magnifying glass) */}
+        <svg width="12" height="12" viewBox="0 0 16 16" style={{ opacity: 0.5 }}>
+          <circle cx="7" cy="7" r="5.5" fill="none" stroke="#999" strokeWidth="1.5" />
+          <line x1="11" y1="11" x2="14.5" y2="14.5" stroke="#999" strokeWidth="1.5" strokeLinecap="round" />
+          <line x1="4.5" y1="7" x2="9.5" y2="7" stroke="#999" strokeWidth="1.2" strokeLinecap="round" />
+        </svg>
+        <input
+          type="range"
+          tabIndex={-1}
+          min={0}
+          max={ZOOM_LEVELS.length - 1}
+          step={1}
+          value={currentZoomIndex}
+          onChange={(e) => {
+            const idx = Number(e.target.value);
+            const newPpt = ZOOM_LEVELS[idx];
+            // Anchor zoom around playhead position (same logic as wheel zoom)
+            const playheadTick = useUiStore.getState().playheadTick;
+            const scrollX = viewport.scrollX;
+            const ppt = viewport.pixelsPerTick;
+            const playheadPx = (playheadTick - scrollX) * ppt;
+            const newScrollX = Math.max(0, playheadTick - playheadPx / newPpt);
+            setViewport({ pixelsPerTick: newPpt, scrollX: newScrollX });
+          }}
+          title={`Zoom: ${Math.round(viewport.pixelsPerTick * 1000) / 1000}`}
+          style={{
+            width: 80,
+            height: 3,
+            accentColor: '#888',
+            cursor: 'pointer',
+          }}
+        />
+        {/* Zoom in icon (magnifying glass with +) */}
+        <svg width="12" height="12" viewBox="0 0 16 16" style={{ opacity: 0.5 }}>
+          <circle cx="7" cy="7" r="5.5" fill="none" stroke="#999" strokeWidth="1.5" />
+          <line x1="11" y1="11" x2="14.5" y2="14.5" stroke="#999" strokeWidth="1.5" strokeLinecap="round" />
+          <line x1="4.5" y1="7" x2="9.5" y2="7" stroke="#999" strokeWidth="1.2" strokeLinecap="round" />
+          <line x1="7" y1="4.5" x2="7" y2="9.5" stroke="#999" strokeWidth="1.2" strokeLinecap="round" />
+        </svg>
+      </div>
     </div>
   );
 };
