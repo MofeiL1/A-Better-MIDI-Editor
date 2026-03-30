@@ -61,6 +61,21 @@ React 18, TypeScript, Vite, Zustand, Tone.js, Canvas. No backend.
 - Chord velocity visualization / 和弦内力度分布可视化
 - Editable BPM & key signature / 可编辑 BPM 和调号
 
+## Future Outlook / 未来展望
+
+- **Visual Music Theory / 可视化乐理** — Real-time chord detection and labeling on the piano roll. Tonal tension heatmaps, harmonic function color overlays, and interval relationship visualization to make theory intuitive at a glance.
+- **可视化乐理** — 在 Piano Roll 上实时检测和标注和弦。调性张力热力图、和弦功能色彩叠加、音程关系可视化，让乐理一目了然。
+
+- **Rule-Based Arpeggio & Accompaniment / 基于规则的琶音与伴奏生成** — Define rhythm patterns and pitch rules to automatically expand chords into arpeggios and accompaniment figures. Built-in presets (Alberti bass, broken chords, etc.) with full custom rule support. Deterministic and fully controllable — no black boxes.
+- **基于规则的琶音与伴奏生成** — 定义节奏型和音高规则，自动将和弦展开为琶音和伴奏织体。内置常见模式（阿尔贝蒂低音、分解和弦等），支持自定义规则。确定性，完全可控，没有黑箱。
+
+- **Melody Analysis & Variation Management / 旋律分析与变奏管理** — Automatic motif and phrase structure recognition. A variation tree that lets you save multiple versions of the same passage and switch between them for comparison. Built-in transformation helpers: inversion, retrograde, rhythmic augmentation/diminution, and more.
+- **旋律分析与变奏管理** — 自动识别旋律动机与乐句结构。变奏版本树，对同一段旋律保存多个变奏，随时切换对比。内置变奏手法辅助：倒影、逆行、节奏扩大/缩小等。
+
+> **No Generative AI / 不包含生成式 AI 功能** — This project does not include and will never incorporate generative AI features. We will never use unauthorized music from others in development. This is a tool that empowers creators — not one that replaces them.
+>
+> 本项目不包含、未来也不会加入生成式人工智能功能。制作过程中绝不使用未经授权的他人音乐。这是一个赋能创作者的工具，而不是替代创作者的工具。
+
 ## Run locally / 本地运行
 
 ```bash
