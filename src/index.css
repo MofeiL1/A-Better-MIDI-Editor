@@ -1,3 +1,5 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
+
 * {
   margin: 0;
   padding: 0;
@@ -7,17 +9,34 @@
 html, body, #root {
   height: 100%;
   overflow: hidden;
-  background-color: #1a1a1a;
+  background-color: #161616;
 }
 
-button:focus {
-  outline: 1px solid #666;
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
-select:focus {
-  outline: 1px solid #666;
+button {
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.15s ease;
 }
 
-input:focus {
-  outline: 1px solid #666;
+button:active {
+  transform: scale(0.97);
+}
+
+select, input {
+  font-family: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid rgba(100, 160, 255, 0.6);
+  outline-offset: 1px;
+}
+
+::selection {
+  background: rgba(100, 160, 255, 0.3);
 }

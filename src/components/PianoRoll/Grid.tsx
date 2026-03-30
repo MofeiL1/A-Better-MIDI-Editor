@@ -40,10 +40,13 @@ export const Grid: React.FC<GridProps> = ({
     canvas.width = width * dpr;
     canvas.height = height * dpr;
     ctx.scale(dpr, dpr);
-
     ctx.clearRect(0, 0, width, height);
 
-    // Draw pitch row backgrounds
+    // Background
+    ctx.fillStyle = '#1a1a1c';
+    ctx.fillRect(0, 0, width, height);
+
+    // Pitch row backgrounds
     const visiblePitches = Math.ceil(height / pixelsPerSemitone) + 2;
     for (let i = -1; i <= visiblePitches; i++) {
       const pitch = scrollY + i;
@@ -54,28 +57,29 @@ export const Grid: React.FC<GridProps> = ({
       const rootNote = isRoot(pitch, scaleRoot);
 
       if (rootNote) {
-        ctx.fillStyle = 'rgba(255, 180, 50, 0.08)';
+        ctx.fillStyle = 'rgba(255, 190, 60, 0.05)';
       } else if (inScale) {
-        ctx.fillStyle = isBlack ? 'rgba(100, 200, 100, 0.03)' : 'rgba(100, 200, 100, 0.06)';
+        ctx.fillStyle = isBlack ? 'rgba(120, 200, 140, 0.015)' : 'rgba(120, 200, 140, 0.035)';
       } else {
-        ctx.fillStyle = isBlack ? '#1a1a1a' : '#222222';
+        ctx.fillStyle = isBlack ? 'rgba(0, 0, 0, 0.15)' : 'rgba(255, 255, 255, 0.01)';
       }
       ctx.fillRect(0, y, width, pixelsPerSemitone);
     }
 
-    // Draw horizontal pitch lines
+    // Horizontal pitch lines
     for (let i = -1; i <= visiblePitches; i++) {
       const pitch = scrollY + i;
       const y = height - (pitch - scrollY + 1) * pixelsPerSemitone;
-      ctx.strokeStyle = pitchClass(pitch) === 0 ? '#555' : '#333';
-      ctx.lineWidth = pitchClass(pitch) === 0 ? 1 : 0.5;
+      const isOctave = pitchClass(pitch) === 0;
+      ctx.strokeStyle = isOctave ? 'rgba(255, 255, 255, 0.08)' : 'rgba(255, 255, 255, 0.025)';
+      ctx.lineWidth = isOctave ? 1 : 0.5;
       ctx.beginPath();
       ctx.moveTo(0, y + pixelsPerSemitone);
       ctx.lineTo(width, y + pixelsPerSemitone);
       ctx.stroke();
     }
 
-    // Draw vertical beat/bar lines
+    // Vertical beat/bar lines
     const ticksPerBar = ticksPerBeat * numerator;
     const startTick = Math.floor(scrollX / ticksPerBeat) * ticksPerBeat;
     const endTick = scrollX + width / pixelsPerTick;
@@ -83,19 +87,18 @@ export const Grid: React.FC<GridProps> = ({
     for (let tick = startTick; tick <= endTick; tick += ticksPerBeat) {
       const x = (tick - scrollX) * pixelsPerTick;
       const isBar = tick % ticksPerBar === 0;
-      ctx.strokeStyle = isBar ? '#555' : '#333';
+      ctx.strokeStyle = isBar ? 'rgba(255, 255, 255, 0.1)' : 'rgba(255, 255, 255, 0.03)';
       ctx.lineWidth = isBar ? 1 : 0.5;
       ctx.beginPath();
       ctx.moveTo(x, 0);
       ctx.lineTo(x, height);
       ctx.stroke();
 
-      // Bar number
       if (isBar) {
         const barNum = Math.floor(tick / ticksPerBar) + 1;
-        ctx.fillStyle = '#666';
-        ctx.font = '10px monospace';
-        ctx.fillText(String(barNum), x + 3, 12);
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
+        ctx.font = '500 10px Inter, -apple-system, sans-serif';
+        ctx.fillText(String(barNum), x + 4, 14);
       }
     }
   }, [width, height, scrollX, scrollY, pixelsPerTick, pixelsPerSemitone, ticksPerBeat, numerator, scaleRoot, scaleMode]);

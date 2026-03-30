@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useCallback } from 'react';
+import React, { useRef, useEffect } from 'react';
 import type { Note } from '../../types/model';
 import { isInScale, pitchClass } from '../../utils/music';
 
@@ -21,13 +21,19 @@ interface NoteLayerProps {
 function velocityToColor(velocity: number, selected: boolean, inScale: boolean): string {
   const v = velocity / 127;
   if (selected) {
-    return `hsl(45, 90%, ${40 + v * 30}%)`;
+    // Warm gold for selected — Apple accent feel
+    const l = 50 + v * 15;
+    return `hsl(42, 85%, ${l}%)`;
   }
   if (!inScale) {
-    return `hsl(0, 60%, ${30 + v * 25}%)`;
+    // Muted rose for out-of-scale
+    return `hsla(350, 50%, ${35 + v * 15}%, 0.85)`;
   }
-  // Blue-to-cyan gradient based on velocity
-  return `hsl(${200 + v * 20}, ${60 + v * 20}%, ${35 + v * 25}%)`;
+  // Cool blue — velocity maps brightness
+  const h = 210 + v * 10;
+  const s = 55 + v * 15;
+  const l = 40 + v * 20;
+  return `hsl(${h}, ${s}%, ${l}%)`;
 }
 
 export const NoteLayer: React.FC<NoteLayerProps> = ({
@@ -57,7 +63,6 @@ export const NoteLayer: React.FC<NoteLayerProps> = ({
     canvas.width = width * dpr;
     canvas.height = height * dpr;
     ctx.scale(dpr, dpr);
-
     ctx.clearRect(0, 0, width, height);
 
     const minVisibleTick = scrollX;
@@ -66,7 +71,6 @@ export const NoteLayer: React.FC<NoteLayerProps> = ({
     const maxVisiblePitch = scrollY + Math.ceil(height / pixelsPerSemitone) + 1;
 
     for (const note of notes) {
-      // Cull invisible notes
       const noteEnd = note.startTick + note.duration;
       if (noteEnd < minVisibleTick || note.startTick > maxVisibleTick) continue;
       if (note.pitch < minVisiblePitch || note.pitch > maxVisiblePitch) continue;
@@ -78,33 +82,50 @@ export const NoteLayer: React.FC<NoteLayerProps> = ({
 
       const selected = selectedNoteIds.has(note.id);
       const inScale = isInScale(note.pitch, scaleRoot, scaleMode);
+      const color = velocityToColor(note.velocity, selected, inScale);
 
-      // Note body
-      ctx.fillStyle = velocityToColor(note.velocity, selected, inScale);
-      const radius = Math.min(3, h / 3);
+      // Note body with rounded corners
+      const radius = Math.min(4, h / 3, w / 3);
+      const noteX = x + 0.5;
+      const noteY = y + 1;
+      const noteW = Math.max(w - 1, 3);
+      const noteH = h - 2;
+
       ctx.beginPath();
-      ctx.roundRect(x + 0.5, y + 0.5, Math.max(w - 1, 2), h - 1, radius);
+      ctx.roundRect(noteX, noteY, noteW, noteH, radius);
+      ctx.fillStyle = color;
       ctx.fill();
 
-      // Border
+      // Subtle inner highlight (top edge glow)
+      const grad = ctx.createLinearGradient(noteX, noteY, noteX, noteY + noteH);
+      grad.addColorStop(0, 'rgba(255, 255, 255, 0.12)');
+      grad.addColorStop(0.3, 'rgba(255, 255, 255, 0)');
+      grad.addColorStop(1, 'rgba(0, 0, 0, 0.1)');
+      ctx.fillStyle = grad;
+      ctx.fill();
+
+      // Selection border
       if (selected) {
-        ctx.strokeStyle = '#ffdd88';
+        ctx.strokeStyle = 'rgba(255, 215, 100, 0.7)';
         ctx.lineWidth = 1.5;
         ctx.stroke();
       }
 
-      // Resize handle (right edge)
-      if (w > 8) {
-        ctx.fillStyle = selected ? 'rgba(255,255,200,0.4)' : 'rgba(255,255,255,0.15)';
-        ctx.fillRect(x + w - 5, y + 1, 4, h - 2);
+      // Resize handle
+      if (noteW > 10) {
+        ctx.fillStyle = selected ? 'rgba(255, 255, 220, 0.25)' : 'rgba(255, 255, 255, 0.08)';
+        const handleW = Math.min(4, noteW * 0.15);
+        ctx.beginPath();
+        ctx.roundRect(noteX + noteW - handleW - 1, noteY + 2, handleW, noteH - 4, 1);
+        ctx.fill();
       }
 
-      // Note name label for wide enough notes
-      if (w > 30 && h >= 12) {
-        ctx.fillStyle = 'rgba(255,255,255,0.8)';
-        ctx.font = `${Math.min(10, h - 3)}px monospace`;
-        const noteName = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'][pitchClass(note.pitch)];
-        ctx.fillText(noteName, x + 3, y + h - 3);
+      // Note name
+      if (noteW > 28 && noteH >= 12) {
+        ctx.fillStyle = selected ? 'rgba(0, 0, 0, 0.5)' : 'rgba(255, 255, 255, 0.7)';
+        ctx.font = `500 ${Math.min(10, noteH - 4)}px Inter, -apple-system, sans-serif`;
+        const name = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'][pitchClass(note.pitch)];
+        ctx.fillText(name, noteX + 4, noteY + noteH - 3);
       }
     }
   }, [width, height, scrollX, scrollY, pixelsPerTick, pixelsPerSemitone, notes, selectedNoteIds, scaleRoot, scaleMode]);

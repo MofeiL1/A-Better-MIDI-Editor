@@ -1,7 +1,7 @@
 import React from 'react';
 import { pitchToNoteName, isInScale, isRoot, pitchClass } from '../../utils/music';
 
-const BLACK_KEYS = new Set([1, 3, 6, 8, 10]); // C#, D#, F#, G#, A#
+const BLACK_KEYS = new Set([1, 3, 6, 8, 10]);
 
 interface PianoKeysProps {
   scrollY: number;
@@ -29,11 +29,16 @@ export const PianoKeys: React.FC<PianoKeysProps> = ({
     const isBlack = BLACK_KEYS.has(pitchClass(pitch));
     const inScale = isInScale(pitch, scaleRoot, scaleMode);
     const isRootNote = isRoot(pitch, scaleRoot);
+    const isC = pitchClass(pitch) === 0;
 
-    let bg = isBlack ? '#2a2a2a' : '#3a3a3a';
-    if (isRootNote) bg = '#4a3a2a';
-    else if (inScale && !isBlack) bg = '#333a33';
-    else if (inScale && isBlack) bg = '#2a332a';
+    let bg = isBlack ? '#1c1c1e' : '#2c2c2e';
+    if (isRootNote) bg = isBlack ? '#2a2518' : '#332d1e';
+    else if (inScale) bg = isBlack ? '#1e2220' : '#282e2a';
+
+    const showLabel = isC || isRootNote;
+    let labelColor = 'rgba(255, 255, 255, 0.25)';
+    if (isRootNote) labelColor = 'rgba(255, 200, 80, 0.9)';
+    else if (isC) labelColor = 'rgba(255, 255, 255, 0.5)';
 
     keys.push(
       <div
@@ -42,28 +47,36 @@ export const PianoKeys: React.FC<PianoKeysProps> = ({
           position: 'absolute',
           top: y,
           left: 0,
-          width: 60,
+          width: 56,
           height: pixelsPerSemitone,
           backgroundColor: bg,
-          borderBottom: '1px solid #555',
+          borderBottom: '1px solid rgba(255, 255, 255, 0.03)',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'flex-end',
-          paddingRight: 6,
+          paddingRight: 8,
           fontSize: 10,
-          color: isRootNote ? '#ffcc66' : inScale ? '#bbb' : '#666',
-          fontWeight: isRootNote ? 700 : 400,
+          fontWeight: isRootNote ? 600 : 400,
+          color: labelColor,
           boxSizing: 'border-box',
           userSelect: 'none',
+          letterSpacing: -0.2,
         }}
       >
-        {pitchClass(pitch) === 0 || isRootNote ? pitchToNoteName(pitch) : ''}
+        {showLabel ? pitchToNoteName(pitch) : ''}
       </div>
     );
   }
 
   return (
-    <div style={{ position: 'relative', width: 60, height: canvasHeight, overflow: 'hidden', flexShrink: 0 }}>
+    <div style={{
+      position: 'relative',
+      width: 56,
+      height: canvasHeight,
+      overflow: 'hidden',
+      flexShrink: 0,
+      borderRight: '1px solid rgba(255, 255, 255, 0.06)',
+    }}>
       {keys}
     </div>
   );

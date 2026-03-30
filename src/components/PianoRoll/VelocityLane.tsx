@@ -34,16 +34,14 @@ export const VelocityLane: React.FC<VelocityLaneProps> = ({
     canvas.height = height * dpr;
     ctx.scale(dpr, dpr);
 
-    ctx.clearRect(0, 0, width, height);
-
     // Background
-    ctx.fillStyle = '#1a1a1a';
+    ctx.fillStyle = '#141416';
     ctx.fillRect(0, 0, width, height);
 
-    // Horizontal guide lines
+    // Guide lines
     for (const v of [32, 64, 96]) {
-      const y = height - (v / 127) * height;
-      ctx.strokeStyle = '#333';
+      const y = height - (v / 127) * (height - 8);
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.04)';
       ctx.lineWidth = 0.5;
       ctx.beginPath();
       ctx.moveTo(0, y);
@@ -58,45 +56,43 @@ export const VelocityLane: React.FC<VelocityLaneProps> = ({
       if (note.startTick + note.duration < minVisibleTick || note.startTick > maxVisibleTick) continue;
 
       const x = (note.startTick - scrollX) * pixelsPerTick;
-      const barH = (note.velocity / 127) * (height - 4);
-      const barW = Math.max(note.duration * pixelsPerTick - 1, 3);
+      const barH = (note.velocity / 127) * (height - 8);
+      const barW = Math.max(note.duration * pixelsPerTick - 2, 3);
       const selected = selectedNoteIds.has(note.id);
 
-      // Velocity bar
-      const hue = 200 + (note.velocity / 127) * 20;
-      ctx.fillStyle = selected ? `hsl(45, 90%, 55%)` : `hsl(${hue}, 70%, 50%)`;
-      ctx.fillRect(x, height - barH, barW, barH);
+      const v = note.velocity / 127;
+      const hue = selected ? 42 : 210 + v * 10;
+      const sat = selected ? 85 : 55 + v * 15;
+      const lig = selected ? 55 : 40 + v * 18;
 
-      // Velocity value on top
-      if (barW > 14) {
-        ctx.fillStyle = '#ddd';
-        ctx.font = '9px monospace';
-        ctx.fillText(String(note.velocity), x + 1, height - barH - 2);
+      // Bar with rounded top
+      ctx.beginPath();
+      ctx.roundRect(x + 0.5, height - barH, barW, barH, [3, 3, 0, 0]);
+      ctx.fillStyle = `hsl(${hue}, ${sat}%, ${lig}%)`;
+      ctx.fill();
+
+      // Top glow
+      const grad = ctx.createLinearGradient(x, height - barH, x, height - barH + 6);
+      grad.addColorStop(0, 'rgba(255, 255, 255, 0.15)');
+      grad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+      ctx.fillStyle = grad;
+      ctx.fill();
+
+      // Value label
+      if (barW > 16) {
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+        ctx.font = '500 9px Inter, -apple-system, sans-serif';
+        ctx.fillText(String(note.velocity), x + 2, height - barH - 3);
       }
     }
   }, [width, height, scrollX, pixelsPerTick, notes, selectedNoteIds]);
 
-  const handleMouseDown = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
-    isDragging.current = true;
-    handleVelocityEdit(e);
-  }, [scrollX, pixelsPerTick, notes, height, onVelocityChange]);
-
-  const handleMouseMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (!isDragging.current) return;
-    handleVelocityEdit(e);
-  }, [scrollX, pixelsPerTick, notes, height, onVelocityChange]);
-
-  const handleMouseUp = useCallback(() => {
-    isDragging.current = false;
-  }, []);
-
-  function handleVelocityEdit(e: React.MouseEvent<HTMLCanvasElement>) {
+  const handleVelocityEdit = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
     const mx = e.clientX - rect.left;
     const my = e.clientY - rect.top;
     const velocity = Math.round(Math.max(1, Math.min(127, ((height - my) / height) * 127)));
 
-    // Find note under cursor
     for (const note of notes) {
       const x = (note.startTick - scrollX) * pixelsPerTick;
       const w = Math.max(note.duration * pixelsPerTick, 3);
@@ -105,16 +101,21 @@ export const VelocityLane: React.FC<VelocityLaneProps> = ({
         break;
       }
     }
-  }
+  }, [scrollX, pixelsPerTick, notes, height, onVelocityChange]);
 
   return (
     <canvas
       ref={canvasRef}
-      style={{ width, height, cursor: 'ns-resize', borderTop: '1px solid #444' }}
-      onMouseDown={handleMouseDown}
-      onMouseMove={handleMouseMove}
-      onMouseUp={handleMouseUp}
-      onMouseLeave={handleMouseUp}
+      style={{
+        width,
+        height,
+        cursor: 'ns-resize',
+        borderTop: '1px solid rgba(255, 255, 255, 0.04)',
+      }}
+      onMouseDown={(e) => { isDragging.current = true; handleVelocityEdit(e); }}
+      onMouseMove={(e) => { if (isDragging.current) handleVelocityEdit(e); }}
+      onMouseUp={() => { isDragging.current = false; }}
+      onMouseLeave={() => { isDragging.current = false; }}
     />
   );
 };

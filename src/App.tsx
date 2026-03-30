@@ -13,9 +13,8 @@ const App: React.FC = () => {
         display: 'flex',
         flexDirection: 'column',
         height: '100vh',
-        backgroundColor: '#1a1a1a',
-        color: '#ccc',
-        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace',
+        backgroundColor: '#161616',
+        color: 'rgba(255, 255, 255, 0.85)',
         overflow: 'hidden',
       }}
     >
