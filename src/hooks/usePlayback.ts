@@ -23,7 +23,7 @@ export function usePlayback() {
 
     const ctx = Tone.getContext();
     ctx.lookAhead = audioLatency;
-    ctx.updateInterval = Math.max(0.01, audioLatency / 2);
+    (ctx as unknown as Record<string, unknown>).updateInterval = Math.max(0.01, audioLatency / 2);
 
     const bpm = project.tempoChanges[0]?.bpm ?? 120;
     const tpb = project.ticksPerBeat;

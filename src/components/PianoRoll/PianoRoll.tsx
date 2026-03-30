@@ -321,8 +321,6 @@ export const PianoRoll: React.FC = () => {
       }
 
       if (!activeClipId) return;
-      const dx = mx - ds.startX;
-      const dy = my - ds.startY;
 
       if (ds.type === 'draw-resize' && ds.noteId && ds.noteStartTick !== undefined) {
         const currentTick = pixelToTick(mx, ppt, scrollX);
