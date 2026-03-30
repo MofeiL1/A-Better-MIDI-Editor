@@ -12,6 +12,7 @@ interface GridProps {
   pixelsPerSemitone: number;
   ticksPerBeat: number;
   numerator: number;
+  denominator: number;
   snapDivision: number;
 }
 
@@ -24,6 +25,7 @@ export const Grid: React.FC<GridProps> = ({
   pixelsPerSemitone,
   ticksPerBeat,
   numerator,
+  denominator,
   snapDivision,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -84,7 +86,7 @@ export const Grid: React.FC<GridProps> = ({
     }
 
     // -- Vertical lines: subdivisions, beats, bars --
-    const ticksPerBar = ticksPerBeat * numerator;
+    const ticksPerBar = ticksPerBeat * numerator * (4 / denominator);
     const snapTicks = (ticksPerBeat * 4) / snapDivision;
     const startTick = Math.floor(scrollX / snapTicks) * snapTicks;
     const endTick = scrollX + width / pixelsPerTick;
@@ -113,7 +115,7 @@ export const Grid: React.FC<GridProps> = ({
       ctx.lineTo(x, height);
       ctx.stroke();
     }
-  }, [width, height, scrollX, scrollY, pixelsPerTick, pixelsPerSemitone, ticksPerBeat, numerator, snapDivision]);
+  }, [width, height, scrollX, scrollY, pixelsPerTick, pixelsPerSemitone, ticksPerBeat, numerator, denominator, snapDivision]);
 
   return (
     <canvas

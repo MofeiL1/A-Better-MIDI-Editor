@@ -67,7 +67,9 @@ interface ProjectStore {
 
   // Project-level
   loadProject: (project: Project) => void;
+  setProjectName: (name: string) => void;
   setTempo: (bpm: number) => void;
+  setTimeSignature: (numerator: number, denominator: number) => void;
   setKey: (key: string) => void;
 }
 
@@ -329,6 +331,11 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     set({ project });
   },
 
+  setProjectName: (name) => {
+    const { project } = get();
+    set({ project: { ...project, name } });
+  },
+
   setTempo: (bpm) => {
     get().pushUndo();
     const { project } = get();
@@ -336,6 +343,17 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       project: {
         ...project,
         tempoChanges: [{ tick: 0, bpm }],
+      },
+    });
+  },
+
+  setTimeSignature: (numerator, denominator) => {
+    get().pushUndo();
+    const { project } = get();
+    set({
+      project: {
+        ...project,
+        timeSignatureChanges: [{ tick: 0, numerator, denominator }],
       },
     });
   },

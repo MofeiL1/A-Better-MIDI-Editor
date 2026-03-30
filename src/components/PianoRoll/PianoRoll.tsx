@@ -87,7 +87,7 @@ export const PianoRoll: React.FC = () => {
   const notes = activeClip?.notes ?? [];
 
   const snapTicks = getSnapTicksFromDivision(snapDivision, project.ticksPerBeat);
-  const ts = project.timeSignatureChanges[0] ?? { numerator: 4 };
+  const ts = project.timeSignatureChanges[0] ?? { numerator: 4, denominator: 4 };
   const bpm = project.tempoChanges[0]?.bpm ?? 120;
 
   // drag type extended with trim-start and draw-resize
@@ -470,6 +470,7 @@ export const PianoRoll: React.FC = () => {
           pixelsPerTick={ppt}
           ticksPerBeat={project.ticksPerBeat}
           numerator={ts.numerator}
+          denominator={ts.denominator ?? 4}
           playheadTick={playheadTick}
           snapTicks={snapTicks}
           onSetPlayhead={handleSetPlayhead}
@@ -496,6 +497,7 @@ export const PianoRoll: React.FC = () => {
             pixelsPerSemitone={pps}
             ticksPerBeat={project.ticksPerBeat}
             numerator={ts.numerator}
+          denominator={ts.denominator ?? 4}
             snapDivision={snapDivision}
           />
           <NoteLayer
@@ -557,6 +559,7 @@ export const PianoRoll: React.FC = () => {
           pixelsPerTick={ppt}
           ticksPerBeat={project.ticksPerBeat}
           numerator={ts.numerator}
+          denominator={ts.denominator ?? 4}
           playheadTick={playheadTick}
           snapTicks={snapTicks}
           onSetPlayhead={handleSetPlayhead}

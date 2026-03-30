@@ -29,7 +29,9 @@ const textBtnStyle: React.CSSProperties = {
 export const TransportBar: React.FC = () => {
   const project = useProjectStore((s) => s.project);
   const loadProject = useProjectStore((s) => s.loadProject);
+  const setProjectName = useProjectStore((s) => s.setProjectName);
   const setTempo = useProjectStore((s) => s.setTempo);
+  const setTimeSignature = useProjectStore((s) => s.setTimeSignature);
   const undo = useProjectStore((s) => s.undo);
   const redo = useProjectStore((s) => s.redo);
   const isPlaying = useUiStore((s) => s.isPlaying);
@@ -50,7 +52,7 @@ export const TransportBar: React.FC = () => {
   const bpm = project.tempoChanges[0]?.bpm ?? 120;
   const ticksPerBeat = project.ticksPerBeat;
   const ts = project.timeSignatureChanges[0] ?? { numerator: 4 };
-  const ticksPerBar = ticksPerBeat * ts.numerator;
+  const ticksPerBar = ticksPerBeat * ts.numerator * (4 / (ts.denominator ?? 4));
 
   // Format position as Bar.Beat.Tick
   const bar = Math.floor(playheadTick / ticksPerBar) + 1;
@@ -222,14 +224,35 @@ export const TransportBar: React.FC = () => {
           <span style={{ fontSize: 8, color: '#666', fontWeight: 500, letterSpacing: 0.5, textTransform: 'uppercase' }}>
             Sig
           </span>
-          <span style={{
-            fontSize: 14,
-            fontWeight: 600,
-            color: '#e0e0e0',
-            fontFamily: '"SF Mono", "Menlo", "Monaco", monospace',
-          }}>
-            {ts.numerator}/4
-          </span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <select
+              value={ts.numerator}
+              onChange={(e) => setTimeSignature(Number(e.target.value), ts.denominator ?? 4)}
+              style={{
+                width: 28, backgroundColor: '#1a1a1a', color: '#e0e0e0',
+                border: 'none', fontSize: 14, fontWeight: 600,
+                fontFamily: '"SF Mono", "Menlo", "Monaco", monospace',
+                textAlign: 'center', outline: 'none', cursor: 'pointer',
+                colorScheme: 'dark', padding: 0,
+              }}
+            >
+              {[1,2,3,4,5,6,7,8,9,12].map((n) => <option key={n} value={n}>{n}</option>)}
+            </select>
+            <span style={{ color: '#e0e0e0', fontSize: 14, fontWeight: 600, fontFamily: '"SF Mono", monospace' }}>/</span>
+            <select
+              value={ts.denominator ?? 4}
+              onChange={(e) => setTimeSignature(ts.numerator, Number(e.target.value))}
+              style={{
+                width: 28, backgroundColor: '#1a1a1a', color: '#e0e0e0',
+                border: 'none', fontSize: 14, fontWeight: 600,
+                fontFamily: '"SF Mono", "Menlo", "Monaco", monospace',
+                textAlign: 'center', outline: 'none', cursor: 'pointer',
+                colorScheme: 'dark', padding: 0,
+              }}
+            >
+              {[2,4,8,16].map((n) => <option key={n} value={n}>{n}</option>)}
+            </select>
+          </div>
         </div>
       </div>
 
@@ -270,16 +293,69 @@ export const TransportBar: React.FC = () => {
       {/* Spacer */}
       <div style={{ flex: 1 }} />
 
-      {/* Project name */}
-      <span style={{
-        fontSize: 12,
-        fontWeight: 500,
-        color: '#888',
-        letterSpacing: -0.2,
-        marginRight: 8,
-      }}>
-        {project.name}
-      </span>
+      {/* Project name — editable, styled like LCD panel */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 4,
+          backgroundColor: '#1a1a1a',
+          border: '1px solid #333',
+          borderRadius: 4,
+          padding: '3px 10px',
+          marginRight: 8,
+          cursor: 'text',
+        }}
+        onMouseEnter={(e) => {
+          const icon = e.currentTarget.querySelector('[data-pencil]') as HTMLElement;
+          if (icon) icon.style.color = '#ccc';
+        }}
+        onMouseLeave={(e) => {
+          const input = e.currentTarget.querySelector('input');
+          if (input && document.activeElement === input) return; // keep bright during focus
+          const icon = e.currentTarget.querySelector('[data-pencil]') as HTMLElement;
+          if (icon) icon.style.color = '#555';
+        }}
+        onClick={(e) => {
+          const input = e.currentTarget.querySelector('input');
+          input?.focus();
+        }}
+      >
+        <svg data-pencil="" width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ color: '#555', transition: 'color 0.15s', flexShrink: 0, marginLeft: -2, marginRight: 2 }}>
+          <path d="M11.5 1.5l3 3L5 14H2v-3L11.5 1.5z" />
+        </svg>
+        <input
+          type="text"
+          value={project.name}
+          onChange={(e) => setProjectName(e.target.value)}
+          placeholder="Untitled"
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === 'Escape') {
+              e.preventDefault();
+              (e.target as HTMLInputElement).blur();
+            }
+          }}
+          onFocus={(e) => {
+            const icon = e.currentTarget.parentElement?.querySelector('[data-pencil]') as HTMLElement;
+            if (icon) icon.style.color = '#ccc';
+          }}
+          onBlur={(e) => {
+            const icon = e.currentTarget.parentElement?.querySelector('[data-pencil]') as HTMLElement;
+            if (icon) icon.style.color = '#555';
+          }}
+          style={{
+            fontSize: 12,
+            fontWeight: 500,
+            color: '#e0e0e0',
+            backgroundColor: 'transparent',
+            border: 'none',
+            outline: 'none',
+            width: 120,
+            fontFamily: 'inherit',
+            padding: 0,
+          }}
+        />
+      </div>
 
       {/* MIDI Import/Export */}
       <input

@@ -58,9 +58,9 @@
 
 - [ ] 音频延迟深度优化：用户可调 lookAhead 滑块（范围 10–150ms），探索 AudioContext latencyHint 设置
 - [ ] 框选后的智能选择功能（最低音/第N低音/按时值筛选）
-- [ ] BPM 手动编辑（导入后可修改）
-- [ ] 重命名系统（项目名/轨道名可编辑）
-- [ ] 可更改 Key Signature（拍号/调号编辑）
+- [x] 重命名系统（项目名可编辑，铅笔图标，Enter/Escape 确认）
+- [x] 可更改 Time Signature（分子/分母下拉选择，影响网格/Ruler/PlayheadHandle）
+- [x] BPM 可编辑（导入后可修改）
 - [ ] 和弦内 velocity 分布可视化与编辑（纵向展示同一时间点多个音符的 vel 分布，直观调整和弦内部力度平衡）
 - [ ] Feature 告示栏（向用户展示功能介绍、快捷键提示、更新日志等）
 

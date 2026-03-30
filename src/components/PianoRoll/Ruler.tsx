@@ -8,6 +8,7 @@ interface RulerProps {
   pixelsPerTick: number;
   ticksPerBeat: number;
   numerator: number;
+  denominator: number;
   playheadTick: number;
   snapTicks: number;
   onSetPlayhead?: (tick: number) => void;
@@ -24,6 +25,7 @@ export const Ruler: React.FC<RulerProps> = ({
   pixelsPerTick,
   ticksPerBeat,
   numerator,
+  denominator,
   playheadTick,
   snapTicks,
   onSetPlayhead,
@@ -58,7 +60,7 @@ export const Ruler: React.FC<RulerProps> = ({
     ctx.lineTo(width, height - 0.5);
     ctx.stroke();
 
-    const ticksPerBar = ticksPerBeat * numerator;
+    const ticksPerBar = ticksPerBeat * numerator * (4 / denominator);
     const startTick = Math.floor(scrollX / ticksPerBeat) * ticksPerBeat;
     const endTick = scrollX + width / pixelsPerTick;
 
@@ -102,7 +104,7 @@ export const Ruler: React.FC<RulerProps> = ({
       ctx.closePath();
       ctx.fill();
     }
-  }, [width, height, scrollX, pixelsPerTick, ticksPerBeat, numerator, playheadTick]);
+  }, [width, height, scrollX, pixelsPerTick, ticksPerBeat, numerator, denominator, playheadTick]);
 
   const handleMouseDown = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
     e.preventDefault();

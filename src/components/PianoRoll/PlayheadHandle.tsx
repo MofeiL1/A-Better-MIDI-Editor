@@ -7,6 +7,7 @@ interface PlayheadHandleProps {
   pixelsPerTick: number;
   ticksPerBeat: number;
   numerator: number;
+  denominator: number;
   playheadTick: number;
   snapTicks: number;
   onSetPlayhead?: (tick: number) => void;
@@ -20,6 +21,7 @@ export const PlayheadHandle: React.FC<PlayheadHandleProps> = ({
   pixelsPerTick,
   ticksPerBeat,
   numerator,
+  denominator,
   playheadTick,
   snapTicks,
   onSetPlayhead,
@@ -58,7 +60,7 @@ export const PlayheadHandle: React.FC<PlayheadHandleProps> = ({
     ctx.stroke();
 
     // Tick marks drawn from top downward (mirror of ruler's bottom-up marks)
-    const ticksPerBar = ticksPerBeat * numerator;
+    const ticksPerBar = ticksPerBeat * numerator * (4 / denominator);
     const startTick = Math.floor(scrollX / ticksPerBeat) * ticksPerBeat;
     const endTick = scrollX + width / pixelsPerTick;
 
@@ -102,7 +104,7 @@ export const PlayheadHandle: React.FC<PlayheadHandleProps> = ({
       ctx.closePath();
       ctx.fill();
     }
-  }, [width, scrollX, pixelsPerTick, ticksPerBeat, numerator, playheadTick]);
+  }, [width, scrollX, pixelsPerTick, ticksPerBeat, numerator, denominator, playheadTick]);
 
   const handleMouseDown = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
     e.preventDefault();
