@@ -16,6 +16,15 @@ As a musician, I always felt like the tools in mainstream DAWs weren't quite the
 
 ## What's in it / 目前有什么
 
+- **Chord analysis & resolution detection** — Per-measure chord detection with passing tone filtering, chord-tone badges (R, 3, 5, 7...), Roman numeral analysis, and resolution arrows (V-I, ii-V-I, tritone substitution).
+- **和弦分析与解决关系检测** — 按小节检测和弦（过滤经过音），和弦内音标签（R, 3, 5, 7...），Roman numeral 分析，解决关系箭头（V-I、ii-V-I、三全音替代）。
+
+- **Auto key detection** — Detects the most likely key from your notes. Scores 72 candidates (12 roots x 6 modes) by note coverage and tonic chord presence. One-click confirm to lock.
+- **自动调性检测** — 根据已有音符自动检测最可能的调性。对 72 个候选调（12 个根音 x 6 种调式）打分，参考音符覆盖率和主和弦存在性。一键确认锁定。
+
+- **Scale degree notation** — Standard caret (^) notation showing degrees relative to the major scale with accidentals. Bass notes always display their degree below the note.
+- **音阶级数标注** — 标准 ^ 记号，相对大调音阶显示级数及升降号。最低音始终在音符下方显示级数。
+
 - **Velocity-colored notes** — Note and velocity bar colors both reflect velocity (purple → red), with bidirectional hover highlight between the two.
 - **力度色谱音符** — 音符和力度柱颜色都映射力度值（紫→红），上下悬停联动高亮。
 
@@ -30,15 +39,6 @@ As a musician, I always felt like the tools in mainstream DAWs weren't quite the
 
 - **Interactive piano keyboard** — Hold to audition, drag for glissando, click to select all notes at a pitch. Labels follow the selected key.
 - **可交互的钢琴键盘** — 按住试听，拖动刮奏，点击选中同音高音符，标签跟随所选调式。
-
-- **Auto key detection** — Detects the most likely key from your notes. Scores 72 candidates (12 roots x 6 modes) by note coverage and tonic chord presence. One-click confirm to lock.
-- **自动调性检测** — 根据已有音符自动检测最可能的调性。对 72 个候选调（12 个根音 x 6 种调式）打分，参考音符覆盖率和主和弦存在性。一键确认锁定。
-
-- **Chord analysis & resolution detection** — Per-measure chord detection with passing tone filtering, chord-tone badges (R, 3, 5, 7...), Roman numeral analysis, and resolution arrows (V-I, ii-V-I, tritone substitution).
-- **和弦分析与解决关系检测** — 按小节检测和弦（过滤经过音），和弦内音标签（R, 3, 5, 7...），Roman numeral 分析，解决关系箭头（V-I、ii-V-I、三全音替代）。
-
-- **Scale degree notation** — Standard caret (^) notation showing degrees relative to the major scale with accidentals. Bass notes always display their degree below the note.
-- **音阶级数标注** — 标准 ^ 记号，相对大调音阶显示级数及升降号。最低音始终在音符下方显示级数。
 
 - **Modifier tool switching** — Hold Shift in Pencil mode for temporary Pointer; hold Ctrl/Cmd in Pointer mode for temporary Pencil. Cursor updates in real time.
 - **修饰键临时工具切换** — Pencil 模式按住 Shift 临时切为 Pointer；Pointer 模式按住 Ctrl/Cmd 临时切为 Pencil。光标实时跟随。
@@ -75,9 +75,6 @@ React 18, TypeScript, Vite, Zustand, Tone.js, Canvas. No backend.
 - Chord velocity visualization / 和弦内力度分布可视化
 
 ## Future Outlook / 未来展望
-
-- **Visual Music Theory / 可视化乐理** — Real-time chord detection and labeling on the piano roll. Tonal tension heatmaps, harmonic function color overlays, and interval relationship visualization to make theory intuitive at a glance.
-- **可视化乐理** — 在 Piano Roll 上实时检测和标注和弦。调性张力热力图、和弦功能色彩叠加、音程关系可视化，让乐理一目了然。
 
 - **Rule-Based Arpeggio & Accompaniment / 基于规则的琶音与伴奏生成** — Define rhythm patterns and pitch rules to automatically expand chords into arpeggios and accompaniment figures. Built-in presets (Alberti bass, broken chords, etc.) with full custom rule support. Deterministic and fully controllable — no black boxes.
 - **基于规则的琶音与伴奏生成** — 定义节奏型和音高规则，自动将和弦展开为琶音和伴奏织体。内置常见模式（阿尔贝蒂低音、分解和弦等），支持自定义规则。确定性，完全可控，没有黑箱。
