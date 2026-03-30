@@ -87,14 +87,20 @@ export const Grid: React.FC<GridProps> = ({
 
     // -- Vertical lines: subdivisions, beats, bars --
     const ticksPerBar = ticksPerBeat * numerator * (4 / denominator);
-    const snapTicks = (ticksPerBeat * 4) / snapDivision;
-    const startTick = Math.floor(scrollX / snapTicks) * snapTicks;
+    // snapDivision=1 means whole note grid. For non-4/4, "whole note" = one measure.
+    // snapDivision=N means N subdivisions per beat (quarter note base).
+    const snapTicks = snapDivision <= 1
+      ? ticksPerBar  // 1/1 snap = one measure, regardless of time signature
+      : (ticksPerBeat * 4) / snapDivision;
+    // Always draw at least every beat for visual reference
+    const drawStep = Math.min(snapTicks, ticksPerBeat);
+    const startTick = Math.floor(scrollX / drawStep) * drawStep;
     const endTick = scrollX + width / pixelsPerTick;
 
-    for (let tick = startTick; tick <= endTick; tick += snapTicks) {
+    for (let tick = startTick; tick <= endTick; tick += drawStep) {
       const x = Math.round((tick - scrollX) * pixelsPerTick) + 0.5;
-      const isBar = tick % ticksPerBar === 0;
-      const isBeat = tick % ticksPerBeat === 0;
+      const isBar = Math.abs(tick % ticksPerBar) < 0.5;
+      const isBeat = Math.abs(tick % ticksPerBeat) < 0.5;
 
       if (isBar) {
         // Bar line: solid dark black

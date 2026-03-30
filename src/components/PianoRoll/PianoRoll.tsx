@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState, useCallback } from 'react';
+import React, { useRef, useEffect, useState, useCallback, useMemo } from 'react';
 import { Grid } from './Grid';
 import { NoteLayer } from './NoteLayer';
 import { PianoKeys } from './PianoKeys';
@@ -9,6 +9,7 @@ import { useProjectStore } from '../../store/projectStore';
 import { useUiStore } from '../../store/uiStore';
 import { usePreviewNote } from '../../hooks/usePreviewNote';
 import { pixelToTick, yToPitch, snapTick, getSnapTicksFromDivision, tickToPixel, tickToSeconds } from '../../utils/timing';
+import { buildChordToneMap, buildMeasureChordMap } from '../../utils/chordAnalysis';
 import type { Note } from '../../types/model';
 
 const DEFAULT_VEL_HEIGHT = 80;
@@ -29,6 +30,7 @@ export const PianoRoll: React.FC = () => {
   const [velHeight, setVelHeight] = useState(DEFAULT_VEL_HEIGHT);
   const [cursor, setCursor] = useState<string>('crosshair');
   const [selectBox, setSelectBox] = useState<SelectBox>(null);
+  const [drawingNoteId, setDrawingNoteId] = useState<string | null>(null);
 
   const project = useProjectStore((s) => s.project);
   const addNote = useProjectStore((s) => s.addNote);
@@ -45,6 +47,7 @@ export const PianoRoll: React.FC = () => {
   const {
     tool, viewport, selectedNoteIds, snapDivision,
     activeClipId, playheadTick, isPlaying,
+    scaleRoot,
     setViewport, setSelectedNoteIds, clearSelection,
     setActiveClip, setActiveTrack, setPlayheadTick,
   } = useUiStore();
@@ -86,9 +89,24 @@ export const PianoRoll: React.FC = () => {
     .find((c) => c.id === activeClipId);
   const notes = activeClip?.notes ?? [];
 
-  const snapTicks = getSnapTicksFromDivision(snapDivision, project.ticksPerBeat);
   const ts = project.timeSignatureChanges[0] ?? { numerator: 4, denominator: 4 };
+  const snapTicks = getSnapTicksFromDivision(snapDivision, project.ticksPerBeat, ts.numerator ?? 4, ts.denominator ?? 4);
   const bpm = project.tempoChanges[0]?.bpm ?? 120;
+
+  // Chord analysis: per-measure detection with passing tone filter
+  const tsNum = ts.numerator ?? 4;
+  const tsDen = ts.denominator ?? 4;
+  const ticksPerMeasure = project.ticksPerBeat * tsNum * (4 / tsDen);
+
+  const chordToneMap = useMemo(
+    () => buildChordToneMap(notes, project.ticksPerBeat, tsNum, tsDen, drawingNoteId),
+    [notes, project.ticksPerBeat, tsNum, tsDen, drawingNoteId],
+  );
+
+  const measureChordMap = useMemo(
+    () => buildMeasureChordMap(notes, project.ticksPerBeat, tsNum, tsDen, scaleRoot),
+    [notes, project.ticksPerBeat, tsNum, tsDen, scaleRoot],
+  );
 
   // drag type extended with trim-start and draw-resize
   const dragState = useRef<{
@@ -198,6 +216,7 @@ export const PianoRoll: React.FC = () => {
           setSelectedNoteIds(selected);
         }
         setSelectBox(null);
+        setDrawingNoteId(null);
         dragState.current = { type: 'none', startX: 0, startY: 0 };
         endDrag();
       };
@@ -231,7 +250,7 @@ export const PianoRoll: React.FC = () => {
         } else {
           // beginDrag first so addNote skips its own pushUndo — the whole gesture is one undo step
           beginDrag();
-          const snappedTick = snapTick(tick, snapTicks);
+          const snappedTick = snapTick(tick, snapTicks, ticksPerMeasure);
           const clampedPitch = Math.min(127, Math.max(0, Math.round(pitch)));
           const newNoteId = addNote(activeClipId, {
             pitch: clampedPitch,
@@ -243,6 +262,7 @@ export const PianoRoll: React.FC = () => {
           });
           previewNote(clampedPitch, tickToSeconds(snapTicks, bpm, project.ticksPerBeat), 80);
           clearSelection();
+          setDrawingNoteId(newNoteId);
           dragState.current = {
             type: 'draw-resize',
             startX: mx, startY: my,
@@ -325,7 +345,7 @@ export const PianoRoll: React.FC = () => {
 
       if (ds.type === 'draw-resize' && ds.noteId && ds.noteStartTick !== undefined) {
         const currentTick = pixelToTick(mx, ppt, scrollX);
-        const newDuration = Math.max(snapTicks, snapTick(currentTick - ds.noteStartTick, snapTicks));
+        const newDuration = Math.max(snapTicks, snapTick(currentTick - ds.noteStartTick, snapTicks, ticksPerMeasure));
         const rawPitch = yToPitch(my, pps, scrollY, size.height);
         const newPitch = Math.min(127, Math.max(0, Math.round(rawPitch)));
         const note = notes.find((n) => n.id === ds.noteId);
@@ -343,7 +363,7 @@ export const PianoRoll: React.FC = () => {
         // Absolute move: compute target from current mouse position minus the recorded offset
         const currentMouseTick = pixelToTick(mx, ppt, scrollX);
         const currentMousePitch = yToPitch(my, pps, scrollY, size.height);
-        const targetTick = Math.max(0, snapTick(currentMouseTick - ds.mouseTickOffset, snapTicks));
+        const targetTick = Math.max(0, snapTick(currentMouseTick - ds.mouseTickOffset, snapTicks, ticksPerMeasure));
         const targetPitch = Math.round(currentMousePitch - ds.mousePitchOffset);
 
         const note = notes.find((n) => n.id === ds.noteId);
@@ -365,7 +385,7 @@ export const PianoRoll: React.FC = () => {
         }
       } else if (ds.type === 'resize' && ds.noteId && ds.noteStartTick !== undefined) {
         const currentTick = pixelToTick(mx, ppt, scrollX);
-        const newDuration = Math.max(snapTicks, snapTick(currentTick - ds.noteStartTick, snapTicks));
+        const newDuration = Math.max(snapTicks, snapTick(currentTick - ds.noteStartTick, snapTicks, ticksPerMeasure));
         const note = notes.find((n) => n.id === ds.noteId);
         if (note) {
           const delta = newDuration - note.duration;
@@ -377,7 +397,7 @@ export const PianoRoll: React.FC = () => {
       } else if (ds.type === 'trim-start' && ds.noteId && ds.noteStartTick !== undefined) {
         // Trim start: mouse position → new startTick, duration shrinks correspondingly
         const currentTick = pixelToTick(mx, ppt, scrollX);
-        const newStartTick = snapTick(currentTick, snapTicks);
+        const newStartTick = snapTick(currentTick, snapTicks, ticksPerMeasure);
         const note = notes.find((n) => n.id === ds.noteId);
         if (note) {
           const delta = newStartTick - note.startTick;
@@ -436,7 +456,7 @@ export const PianoRoll: React.FC = () => {
   // Ruler click → set playhead snapped to snap division
   const handleSetPlayhead = useCallback(
     (tick: number) => {
-      const snapped = snapTick(tick, snapTicks);
+      const snapped = snapTick(tick, snapTicks, ticksPerMeasure);
       setPlayheadTick(Math.max(0, snapped));
     },
     [snapTicks, setPlayheadTick]
@@ -509,6 +529,9 @@ export const PianoRoll: React.FC = () => {
             pixelsPerSemitone={pps}
             notes={notes}
             selectedNoteIds={selectedNoteIds}
+            chordToneMap={chordToneMap}
+            measureChordMap={measureChordMap}
+            ticksPerMeasure={ticksPerMeasure}
             cursor={cursor}
             onMouseDown={handleMouseDown}
             onMouseMove={handleMouseMove}

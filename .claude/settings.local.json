@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx tsc:*)",
+      "mcp__Claude_Preview__preview_start",
+      "Bash(gh run:*)",
+      "Bash(gh api:*)",
+      "WebSearch",
+      "WebFetch(domain:github.com)",
+      "Bash(git clone:*)",
+      "Read(//c/Users/Eddy-/.claude/skills/gstack/**)",
+      "Bash(ls setup*)",
+      "Bash(command -v bun)",
+      "Bash(bun --version)"
+    ]
+  }
+}

@@ -12,6 +12,12 @@ interface NoteLayerProps {
   pixelsPerSemitone: number;
   notes: Note[];
   selectedNoteIds: Set<string>;
+  /** noteId -> chord tone label ("R", "3", "5", "b7", etc.) */
+  chordToneMap?: Map<string, string>;
+  /** measure index -> chord name ("Cmaj7", "Dm", etc.) */
+  measureChordMap?: Map<number, string>;
+  /** Ticks per measure, needed to render chord names at measure positions */
+  ticksPerMeasure?: number;
   cursor?: string;
   onMouseDown?: (e: React.MouseEvent<HTMLCanvasElement>) => void;
   onMouseMove?: (e: React.MouseEvent<HTMLCanvasElement>) => void;
@@ -47,6 +53,9 @@ export const NoteLayer: React.FC<NoteLayerProps> = ({
   pixelsPerSemitone,
   notes,
   selectedNoteIds,
+  chordToneMap,
+  measureChordMap,
+  ticksPerMeasure,
   cursor = 'crosshair',
   onMouseDown,
   onMouseMove,
@@ -157,7 +166,7 @@ export const NoteLayer: React.FC<NoteLayerProps> = ({
         ctx.stroke();
       }
 
-      // Note name label
+      // Note name label (left side)
       if (noteW > 24 && noteH >= 11) {
         ctx.fillStyle = isSelected
           ? 'rgba(255, 255, 255, 0.9)'
@@ -166,12 +175,132 @@ export const NoteLayer: React.FC<NoteLayerProps> = ({
         const name = NOTE_NAMES[pitchClass(note.pitch)];
         ctx.fillText(name, noteX + 3, noteY + noteH * 0.45 + 1);
       }
+
+      // Chord tone label — importance-based visual hierarchy
+      const toneLabel = chordToneMap?.get(note.id);
+      if (toneLabel && noteH >= 6) {
+        // Importance tiers:
+        // T1 (highest): Root — defines the chord
+        // T2: 3rd/b3 — defines major/minor quality
+        // T3: 7th/b7, altered 5ths (b5, #5) — defines chord color
+        // T4: pure 5th — usually implied, least important
+        // T5: extensions (9, 11, 13, b9, 2, 4, 6) — context-dependent
+        type Tier = 1 | 2 | 3 | 4 | 5;
+        let tier: Tier;
+        switch (toneLabel) {
+          case 'R':           tier = 1; break;
+          case '3': case 'b3': tier = 2; break;
+          case '7': case 'b7': case 'b5': case '#5': tier = 3; break;
+          case '5':           tier = 4; break;
+          default:            tier = 5; break; // 9, 11, 13, b9, 2, 4, 6, etc.
+        }
+
+        // Font size scales with tier: T1 biggest, T4/T5 smallest
+        const baseFontSize = Math.min(11, noteH - 1);
+        const tierFontScale = [1.0, 0.95, 0.85, 0.75, 0.75];
+        const fontSize = Math.max(7, Math.round(baseFontSize * tierFontScale[tier - 1]));
+        const fontWeight = tier <= 2 ? '700' : tier <= 3 ? '600' : '500';
+        ctx.font = `${fontWeight} ${fontSize}px -apple-system, "SF Pro Text", "Helvetica Neue", sans-serif`;
+
+        const textWidth = ctx.measureText(toneLabel).width;
+        const badgePadX = tier <= 2 ? 4 : 3;
+        const badgePadY = tier <= 2 ? 2 : 1;
+        const badgeW = textWidth + badgePadX * 2;
+        const badgeH = fontSize + badgePadY * 2;
+        const badgeX = noteX + noteW - badgeW - 2;
+        const badgeY = noteY + Math.round((noteH - badgeH) / 2); // vertically centered
+
+        // Badge background color by tier
+        let bgColor: string;
+        let textColor: string;
+        switch (tier) {
+          case 1: // Root — bold gold
+            bgColor = 'rgba(255, 195, 40, 0.95)';
+            textColor = 'rgba(30, 20, 0, 0.95)';
+            break;
+          case 2: // 3rd — warm orange-pink (defines major/minor)
+            bgColor = 'rgba(255, 130, 80, 0.9)';
+            textColor = 'rgba(40, 10, 0, 0.95)';
+            break;
+          case 3: // 7th, altered 5ths — cool blue
+            bgColor = 'rgba(90, 160, 255, 0.85)';
+            textColor = 'rgba(0, 10, 40, 0.95)';
+            break;
+          case 4: // Pure 5th — subtle gray
+            bgColor = 'rgba(160, 165, 175, 0.5)';
+            textColor = 'rgba(0, 0, 0, 0.7)';
+            break;
+          default: // Extensions — very subtle
+            bgColor = 'rgba(140, 145, 155, 0.4)';
+            textColor = 'rgba(0, 0, 0, 0.6)';
+            break;
+        }
+
+        // Draw badge
+        const badgeRadius = tier <= 2 ? 3 : 2;
+        ctx.fillStyle = bgColor;
+        ctx.beginPath();
+        ctx.roundRect(badgeX, badgeY, badgeW, badgeH, badgeRadius);
+        ctx.fill();
+
+        // Subtle border for T1 and T2 to pop more
+        if (tier <= 2) {
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+          ctx.lineWidth = 0.5;
+          ctx.beginPath();
+          ctx.roundRect(badgeX, badgeY, badgeW, badgeH, badgeRadius);
+          ctx.stroke();
+        }
+
+        // Badge text
+        ctx.fillStyle = textColor;
+        ctx.fillText(toneLabel, badgeX + badgePadX, badgeY + badgePadY + fontSize * 0.85);
+      }
     };
 
     for (const note of unselected) drawNote(note, false);
     for (const note of selected) drawNote(note, true);
 
-  }, [width, height, scrollX, scrollY, pixelsPerTick, pixelsPerSemitone, notes, selectedNoteIds, velocityDragNoteId, hoveredNoteId]);
+    // Draw chord names at top of each measure
+    if (measureChordMap && measureChordMap.size > 0 && ticksPerMeasure) {
+      const chordFontSize = 12;
+      ctx.font = `600 ${chordFontSize}px -apple-system, "SF Pro Text", "Helvetica Neue", sans-serif`;
+      ctx.textBaseline = 'top';
+
+      for (const [measure, chordName] of measureChordMap) {
+        const measureStartTick = measure * ticksPerMeasure;
+        const x = (measureStartTick - scrollX) * pixelsPerTick;
+        if (x < -100 || x > width + 100) continue;
+
+        const textW = ctx.measureText(chordName).width;
+        const padX = 5;
+        const padY = 3;
+        const bgW = textW + padX * 2;
+        const bgH = chordFontSize + padY * 2;
+        const bgX = x + 4;
+        const bgY = 4;
+
+        // Background pill
+        ctx.fillStyle = 'rgba(30, 30, 36, 0.85)';
+        ctx.beginPath();
+        ctx.roundRect(bgX, bgY, bgW, bgH, 4);
+        ctx.fill();
+
+        // Border
+        ctx.strokeStyle = 'rgba(120, 180, 255, 0.4)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.roundRect(bgX, bgY, bgW, bgH, 4);
+        ctx.stroke();
+
+        // Text
+        ctx.fillStyle = 'rgba(200, 220, 255, 0.95)';
+        ctx.fillText(chordName, bgX + padX, bgY + padY);
+      }
+      ctx.textBaseline = 'alphabetic';
+    }
+
+  }, [width, height, scrollX, scrollY, pixelsPerTick, pixelsPerSemitone, notes, selectedNoteIds, velocityDragNoteId, hoveredNoteId, chordToneMap, measureChordMap, ticksPerMeasure]);
 
   return (
     <canvas

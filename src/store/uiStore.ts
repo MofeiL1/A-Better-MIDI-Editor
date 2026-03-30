@@ -52,11 +52,11 @@ export const useUiStore = create<UiStore>((set) => ({
   viewport: {
     scrollX: 0,
     scrollY: 48, // Start viewing around C3-C5 range
-    pixelsPerTick: 0.25,
+    pixelsPerTick: 0.125, // Half of previous 0.25 — shows ~4 bars at default width
     pixelsPerSemitone: 16,
   },
   selectedNoteIds: new Set<string>(),
-  snapDivision: 4, // quarter note grid
+  snapDivision: 1, // whole note (1/1) grid
   activeTrackId: null,
   activeClipId: null,
   isPlaying: false,

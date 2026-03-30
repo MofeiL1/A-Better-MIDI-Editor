@@ -30,10 +30,12 @@ export const PlayheadHandle: React.FC<PlayheadHandleProps> = ({
   const isDragging = useRef(false);
   const canvasLeft = useRef(0);
 
+  const ticksPerBar = ticksPerBeat * numerator * (4 / denominator);
+
   const tickFromClientX = useCallback((clientX: number) => {
     const raw = (clientX - canvasLeft.current) / pixelsPerTick + scrollX;
-    return Math.max(0, snapTick(raw, snapTicks));
-  }, [pixelsPerTick, scrollX, snapTicks]);
+    return Math.max(0, snapTick(raw, snapTicks, ticksPerBar));
+  }, [pixelsPerTick, scrollX, snapTicks, ticksPerBar]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
