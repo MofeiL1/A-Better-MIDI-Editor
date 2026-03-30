@@ -1,6 +1,6 @@
 import React, { useRef, useEffect } from 'react';
 import type { Note } from '../../types/model';
-import type { ResolutionInfo } from '../../utils/chordAnalysis';
+import type { ResolutionInfo, MeasureChordLabel } from '../../utils/chordAnalysis';
 import { pitchClass, getScaleDegreeName } from '../../utils/music';
 import { useUiStore } from '../../store/uiStore';
 
@@ -15,8 +15,8 @@ interface NoteLayerProps {
   selectedNoteIds: Set<string>;
   /** noteId -> chord tone label ("R", "3", "5", "b7", etc.) */
   chordToneMap?: Map<string, string>;
-  /** measure index -> chord name ("Cmaj7", "Dm", etc.) */
-  measureChordMap?: Map<number, string>;
+  /** measure index -> chord label (name + roman numeral) */
+  measureChordMap?: Map<number, MeasureChordLabel>;
   /** Ticks per measure, needed to render chord names at measure positions */
   ticksPerMeasure?: number;
   /** Scale root (0-11) for scale degree display */
@@ -350,41 +350,65 @@ export const NoteLayer: React.FC<NoteLayerProps> = ({
     for (const note of unselected) drawNote(note, false);
     for (const note of selected) drawNote(note, true);
 
-    // Draw chord names at top of each measure
+    // Draw chord labels at top of each measure — Roman numeral on top, chord name below
     if (measureChordMap && measureChordMap.size > 0 && ticksPerMeasure) {
-      const chordFontSize = 12;
-      ctx.font = `600 ${chordFontSize}px -apple-system, "SF Pro Text", "Helvetica Neue", sans-serif`;
       ctx.textBaseline = 'top';
+      const padX = 5;
+      const padY = 2;
 
-      for (const [measure, chordName] of measureChordMap) {
+      for (const [measure, label] of measureChordMap) {
         const measureStartTick = measure * ticksPerMeasure;
         const x = (measureStartTick - scrollX) * pixelsPerTick;
         if (x < -100 || x > width + 100) continue;
 
-        const textW = ctx.measureText(chordName).width;
-        const padX = 5;
-        const padY = 3;
-        const bgW = textW + padX * 2;
-        const bgH = chordFontSize + padY * 2;
         const bgX = x + 4;
-        const bgY = 4;
+        let curY = 4;
 
-        // Background pill
-        ctx.fillStyle = 'rgba(30, 30, 36, 0.85)';
+        // Row 1: Roman numeral (if available)
+        if (label.roman) {
+          const romanFontSize = 12;
+          ctx.font = `700 ${romanFontSize}px -apple-system, "SF Pro Text", "Helvetica Neue", sans-serif`;
+          const romanW = ctx.measureText(label.roman).width;
+          const rBgW = romanW + padX * 2;
+          const rBgH = romanFontSize + padY * 2;
+
+          ctx.fillStyle = 'rgba(30, 30, 36, 0.85)';
+          ctx.beginPath();
+          ctx.roundRect(bgX, curY, rBgW, rBgH, 4);
+          ctx.fill();
+
+          ctx.strokeStyle = 'rgba(120, 180, 255, 0.4)';
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.roundRect(bgX, curY, rBgW, rBgH, 4);
+          ctx.stroke();
+
+          ctx.fillStyle = 'rgba(200, 220, 255, 0.95)';
+          ctx.fillText(label.roman, bgX + padX, curY + padY);
+
+          curY += rBgH + 2;
+        }
+
+        // Row 2: Chord name (smaller, dimmer)
+        const nameFontSize = 10;
+        ctx.font = `500 ${nameFontSize}px -apple-system, "SF Pro Text", "Helvetica Neue", sans-serif`;
+        const nameW = ctx.measureText(label.name).width;
+        const nBgW = nameW + padX * 2;
+        const nBgH = nameFontSize + padY * 2;
+
+        ctx.fillStyle = 'rgba(30, 30, 36, 0.7)';
         ctx.beginPath();
-        ctx.roundRect(bgX, bgY, bgW, bgH, 4);
+        ctx.roundRect(bgX, curY, nBgW, nBgH, 3);
         ctx.fill();
 
-        // Border
-        ctx.strokeStyle = 'rgba(120, 180, 255, 0.4)';
-        ctx.lineWidth = 1;
+        ctx.strokeStyle = 'rgba(100, 150, 200, 0.25)';
+        ctx.lineWidth = 0.5;
         ctx.beginPath();
-        ctx.roundRect(bgX, bgY, bgW, bgH, 4);
+        ctx.roundRect(bgX, curY, nBgW, nBgH, 3);
         ctx.stroke();
 
-        // Text
-        ctx.fillStyle = 'rgba(200, 220, 255, 0.95)';
-        ctx.fillText(chordName, bgX + padX, bgY + padY);
+        ctx.fillStyle = 'rgba(170, 190, 220, 0.8)';
+        ctx.fillText(label.name, bgX + padX, curY + padY);
       }
       ctx.textBaseline = 'alphabetic';
     }

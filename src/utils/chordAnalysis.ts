@@ -673,23 +673,26 @@ export function detectResolutions(
  * Build a lookup: measure number -> display string (chord name + Roman numeral).
  * For displaying chord names in the ruler or grid.
  */
+export type MeasureChordLabel = {
+  name: string;   // e.g. "Cmaj7", "Dm/F"
+  roman: string;  // e.g. "I", "ii7", "" if no key
+};
+
 export function buildMeasureChordMap(
   notes: Note[],
   ticksPerBeat: number,
   numerator: number,
   denominator: number,
   keyRoot?: number,
-): Map<number, string> {
+): Map<number, MeasureChordLabel> {
   const chords = analyzeChords(notes, ticksPerBeat, numerator, denominator);
-  const map = new Map<number, string>();
+  const map = new Map<number, MeasureChordLabel>();
   for (const chord of chords) {
     if (chord.chordName) {
-      if (keyRoot != null && chord.root) {
-        const roman = chordToRomanNumeral(chord.root, chord.chordType, chord.bass, keyRoot);
-        map.set(chord.measure, `${chord.chordName}  ${roman}`);
-      } else {
-        map.set(chord.measure, chord.chordName);
-      }
+      const roman = (keyRoot != null && chord.root)
+        ? chordToRomanNumeral(chord.root, chord.chordType, chord.bass, keyRoot)
+        : '';
+      map.set(chord.measure, { name: chord.chordName, roman });
     }
   }
   return map;
