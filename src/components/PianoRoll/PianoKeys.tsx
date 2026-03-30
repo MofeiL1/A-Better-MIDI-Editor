@@ -1,81 +1,107 @@
 import React from 'react';
-import { pitchToNoteName, isInScale, isRoot, pitchClass } from '../../utils/music';
+import { pitchToNoteName, pitchClass } from '../../utils/music';
 
 const BLACK_KEYS = new Set([1, 3, 6, 8, 10]);
+const PIANO_KEY_WIDTH = 56;
+const BLACK_KEY_WIDTH = 34;
 
 interface PianoKeysProps {
   scrollY: number;
   pixelsPerSemitone: number;
   canvasHeight: number;
-  scaleRoot: number;
-  scaleMode: string;
 }
 
 export const PianoKeys: React.FC<PianoKeysProps> = ({
   scrollY,
   pixelsPerSemitone,
   canvasHeight,
-  scaleRoot,
-  scaleMode,
 }) => {
   const keys: React.ReactNode[] = [];
-  const visiblePitches = Math.ceil(canvasHeight / pixelsPerSemitone);
+  const visiblePitches = Math.ceil(canvasHeight / pixelsPerSemitone) + 2;
 
-  for (let i = 0; i <= visiblePitches + 1; i++) {
-    const pitch = scrollY + i;
+  // White keys background layer, then black keys on top — like a real piano
+  for (let i = -1; i <= visiblePitches; i++) {
+    const pitch = Math.floor(scrollY) + i;
     if (pitch < 0 || pitch > 127) continue;
 
-    const y = canvasHeight - (pitch - scrollY + 1) * pixelsPerSemitone;
-    const isBlack = BLACK_KEYS.has(pitchClass(pitch));
-    const inScale = isInScale(pitch, scaleRoot, scaleMode);
-    const isRootNote = isRoot(pitch, scaleRoot);
-    const isC = pitchClass(pitch) === 0;
+    const yOffset = scrollY - Math.floor(scrollY);
+    const y = canvasHeight - (pitch - Math.floor(scrollY) + 1) * pixelsPerSemitone + yOffset * pixelsPerSemitone;
+    const pc = pitchClass(pitch);
+    const isBlack = BLACK_KEYS.has(pc);
+    const isC = pc === 0;
 
-    let bg = isBlack ? '#1c1c1e' : '#2c2c2e';
-    if (isRootNote) bg = isBlack ? '#2a2518' : '#332d1e';
-    else if (inScale) bg = isBlack ? '#1e2220' : '#282e2a';
-
-    const showLabel = isC || isRootNote;
-    let labelColor = 'rgba(255, 255, 255, 0.25)';
-    if (isRootNote) labelColor = 'rgba(255, 200, 80, 0.9)';
-    else if (isC) labelColor = 'rgba(255, 255, 255, 0.5)';
-
-    keys.push(
-      <div
-        key={pitch}
-        style={{
-          position: 'absolute',
-          top: y,
-          left: 0,
-          width: 56,
-          height: pixelsPerSemitone,
-          backgroundColor: bg,
-          borderBottom: '1px solid rgba(255, 255, 255, 0.03)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'flex-end',
-          paddingRight: 8,
-          fontSize: 10,
-          fontWeight: isRootNote ? 600 : 400,
-          color: labelColor,
-          boxSizing: 'border-box',
-          userSelect: 'none',
-          letterSpacing: -0.2,
-        }}
-      >
-        {showLabel ? pitchToNoteName(pitch) : ''}
-      </div>
-    );
+    if (isBlack) {
+      // Black key: shorter, darker, overlaid
+      keys.push(
+        <div
+          key={pitch}
+          style={{
+            position: 'absolute',
+            top: y,
+            left: 0,
+            width: BLACK_KEY_WIDTH,
+            height: pixelsPerSemitone,
+            backgroundColor: '#1a1a1a',
+            borderBottom: '1px solid #111',
+            borderRight: '1px solid #111',
+            zIndex: 2,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'flex-end',
+            paddingRight: 4,
+            boxSizing: 'border-box',
+            userSelect: 'none',
+          }}
+        />
+      );
+    } else {
+      // White key
+      keys.push(
+        <div
+          key={pitch}
+          style={{
+            position: 'absolute',
+            top: y,
+            left: 0,
+            width: PIANO_KEY_WIDTH,
+            height: pixelsPerSemitone,
+            backgroundColor: isC ? '#d8d8d8' : '#c8c8c8',
+            borderBottom: `1px solid ${isC ? '#999' : '#aaa'}`,
+            borderRight: '1px solid #888',
+            zIndex: 1,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'flex-end',
+            paddingRight: 6,
+            boxSizing: 'border-box',
+            userSelect: 'none',
+          }}
+        >
+          {isC && (
+            <span style={{
+              fontSize: 9,
+              fontWeight: 600,
+              color: '#555',
+              fontFamily: '-apple-system, "SF Pro Text", "Helvetica Neue", sans-serif',
+              letterSpacing: -0.3,
+            }}>
+              {pitchToNoteName(pitch)}
+            </span>
+          )}
+        </div>
+      );
+    }
   }
 
   return (
     <div style={{
       position: 'relative',
-      width: 56,
+      width: PIANO_KEY_WIDTH,
       height: canvasHeight,
       overflow: 'hidden',
       flexShrink: 0,
-      borderRight: '1px solid rgba(255, 255, 255, 0.06)',
+      backgroundColor: '#b0b0b0',
+      borderRight: '2px solid #555',
     }}>
       {keys}
     </div>

@@ -1,5 +1,5 @@
 import React, { useRef, useEffect } from 'react';
-import { isInScale, isRoot, pitchClass } from '../../utils/music';
+import { pitchClass } from '../../utils/music';
 
 const BLACK_KEYS = new Set([1, 3, 6, 8, 10]);
 
@@ -12,8 +12,7 @@ interface GridProps {
   pixelsPerSemitone: number;
   ticksPerBeat: number;
   numerator: number;
-  scaleRoot: number;
-  scaleMode: string;
+  snapDivision: number;
 }
 
 export const Grid: React.FC<GridProps> = ({
@@ -25,83 +24,96 @@ export const Grid: React.FC<GridProps> = ({
   pixelsPerSemitone,
   ticksPerBeat,
   numerator,
-  scaleRoot,
-  scaleMode,
+  snapDivision,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
+    if (!canvas || width <= 0 || height <= 0) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
     const dpr = window.devicePixelRatio || 1;
-    canvas.width = width * dpr;
-    canvas.height = height * dpr;
+    canvas.width = Math.round(width * dpr);
+    canvas.height = Math.round(height * dpr);
     ctx.scale(dpr, dpr);
     ctx.clearRect(0, 0, width, height);
 
-    // Background
-    ctx.fillStyle = '#1a1a1c';
-    ctx.fillRect(0, 0, width, height);
-
-    // Pitch row backgrounds
+    // -- Logic Pro style: alternating row backgrounds --
     const visiblePitches = Math.ceil(height / pixelsPerSemitone) + 2;
     for (let i = -1; i <= visiblePitches; i++) {
-      const pitch = scrollY + i;
+      const pitch = Math.floor(scrollY) + i;
       if (pitch < 0 || pitch > 127) continue;
-      const y = height - (pitch - scrollY + 1) * pixelsPerSemitone;
+      const yOffset = scrollY - Math.floor(scrollY);
+      const y = height - (pitch - Math.floor(scrollY) + 1) * pixelsPerSemitone + yOffset * pixelsPerSemitone;
       const isBlack = BLACK_KEYS.has(pitchClass(pitch));
-      const inScale = isInScale(pitch, scaleRoot, scaleMode);
-      const rootNote = isRoot(pitch, scaleRoot);
 
-      if (rootNote) {
-        ctx.fillStyle = 'rgba(255, 190, 60, 0.05)';
-      } else if (inScale) {
-        ctx.fillStyle = isBlack ? 'rgba(120, 200, 140, 0.015)' : 'rgba(120, 200, 140, 0.035)';
-      } else {
-        ctx.fillStyle = isBlack ? 'rgba(0, 0, 0, 0.15)' : 'rgba(255, 255, 255, 0.01)';
-      }
+      // Logic Pro: white-key rows slightly lighter, black-key rows darker
+      ctx.fillStyle = isBlack ? '#2a2a2a' : '#323232';
       ctx.fillRect(0, y, width, pixelsPerSemitone);
     }
 
-    // Horizontal pitch lines
+    // -- Horizontal pitch lines --
+    // Logic Pro: strong lines at B/C boundary (octave) and E/F boundary
     for (let i = -1; i <= visiblePitches; i++) {
-      const pitch = scrollY + i;
-      const y = height - (pitch - scrollY + 1) * pixelsPerSemitone;
-      const isOctave = pitchClass(pitch) === 0;
-      ctx.strokeStyle = isOctave ? 'rgba(255, 255, 255, 0.08)' : 'rgba(255, 255, 255, 0.025)';
-      ctx.lineWidth = isOctave ? 1 : 0.5;
+      const pitch = Math.floor(scrollY) + i;
+      if (pitch < 0 || pitch > 127) continue;
+      const yOffset = scrollY - Math.floor(scrollY);
+      const y = height - (pitch - Math.floor(scrollY) + 1) * pixelsPerSemitone + yOffset * pixelsPerSemitone;
+      const pc = pitchClass(pitch);
+
+      // Strong line at C (octave boundary) and E (E/F boundary)
+      if (pc === 0) {
+        // Octave boundary: C note bottom edge
+        ctx.strokeStyle = '#1a1a1a';
+        ctx.lineWidth = 1.5;
+      } else if (pc === 5) {
+        // E/F boundary
+        ctx.strokeStyle = '#222222';
+        ctx.lineWidth = 1;
+      } else {
+        // Regular pitch line — very subtle
+        ctx.strokeStyle = '#2e2e2e';
+        ctx.lineWidth = 0.5;
+      }
       ctx.beginPath();
-      ctx.moveTo(0, y + pixelsPerSemitone);
-      ctx.lineTo(width, y + pixelsPerSemitone);
+      ctx.moveTo(0, Math.round(y + pixelsPerSemitone) + 0.5);
+      ctx.lineTo(width, Math.round(y + pixelsPerSemitone) + 0.5);
       ctx.stroke();
     }
 
-    // Vertical beat/bar lines
+    // -- Vertical lines: subdivisions, beats, bars --
     const ticksPerBar = ticksPerBeat * numerator;
-    const startTick = Math.floor(scrollX / ticksPerBeat) * ticksPerBeat;
+    const snapTicks = ticksPerBeat / snapDivision;
+    const startTick = Math.floor(scrollX / snapTicks) * snapTicks;
     const endTick = scrollX + width / pixelsPerTick;
 
-    for (let tick = startTick; tick <= endTick; tick += ticksPerBeat) {
-      const x = (tick - scrollX) * pixelsPerTick;
+    for (let tick = startTick; tick <= endTick; tick += snapTicks) {
+      const x = Math.round((tick - scrollX) * pixelsPerTick) + 0.5;
       const isBar = tick % ticksPerBar === 0;
-      ctx.strokeStyle = isBar ? 'rgba(255, 255, 255, 0.1)' : 'rgba(255, 255, 255, 0.03)';
-      ctx.lineWidth = isBar ? 1 : 0.5;
+      const isBeat = tick % ticksPerBeat === 0;
+
+      if (isBar) {
+        // Bar line: solid dark black
+        ctx.strokeStyle = '#111111';
+        ctx.lineWidth = 1.5;
+      } else if (isBeat) {
+        // Beat line: dark
+        ctx.strokeStyle = '#1e1e1e';
+        ctx.lineWidth = 1;
+      } else {
+        // Subdivision: light grey dotted feel
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.04)';
+        ctx.lineWidth = 0.5;
+      }
+
       ctx.beginPath();
       ctx.moveTo(x, 0);
       ctx.lineTo(x, height);
       ctx.stroke();
-
-      if (isBar) {
-        const barNum = Math.floor(tick / ticksPerBar) + 1;
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
-        ctx.font = '500 10px Inter, -apple-system, sans-serif';
-        ctx.fillText(String(barNum), x + 4, 14);
-      }
     }
-  }, [width, height, scrollX, scrollY, pixelsPerTick, pixelsPerSemitone, ticksPerBeat, numerator, scaleRoot, scaleMode]);
+  }, [width, height, scrollX, scrollY, pixelsPerTick, pixelsPerSemitone, ticksPerBeat, numerator, snapDivision]);
 
   return (
     <canvas

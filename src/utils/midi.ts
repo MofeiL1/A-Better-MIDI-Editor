@@ -67,7 +67,7 @@ export async function importMidi(file: File): Promise<Project> {
  */
 export function exportMidi(project: Project): Blob {
   const midi = new Midi();
-  (midi.header as unknown as Record<string, unknown>).ppq = project.ticksPerBeat;
+  Object.defineProperty(midi.header, 'ppq', { value: project.ticksPerBeat, writable: false, configurable: true });
 
   // Set tempo
   for (const tc of project.tempoChanges) {

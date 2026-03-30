@@ -9,7 +9,15 @@ export function useKeyboard() {
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      const { setTool, selectedNoteIds, clearSelection, activeClipId } = useUiStore.getState();
+      const { setTool, selectedNoteIds, clearSelection, activeClipId, clipboard, setClipboard, setSelectedNoteIds, playheadTick, isPlaying, setIsPlaying } = useUiStore.getState();
+      const { project, pasteNotes } = useProjectStore.getState();
+
+      // Space: play/stop — always intercept to prevent dropdown/button activation
+      if (e.key === ' ') {
+        e.preventDefault();
+        setIsPlaying(!isPlaying);
+        return;
+      }
 
       // Tool switching
       if (e.key === '1') { setTool('select'); return; }
@@ -35,13 +43,32 @@ export function useKeyboard() {
         return;
       }
 
+      // Copy
+      if ((e.ctrlKey || e.metaKey) && e.key === 'c') {
+        e.preventDefault();
+        if (selectedNoteIds.size === 0 || !activeClipId) return;
+        const clip = project.tracks.flatMap((t) => t.clips).find((c) => c.id === activeClipId);
+        if (!clip) return;
+        const copied = clip.notes.filter((n) => selectedNoteIds.has(n.id));
+        setClipboard(copied);
+        return;
+      }
+
+      // Paste
+      if ((e.ctrlKey || e.metaKey) && e.key === 'v') {
+        e.preventDefault();
+        if (clipboard.length === 0 || !activeClipId) return;
+        const newIds = pasteNotes(activeClipId, clipboard, playheadTick);
+        setSelectedNoteIds(new Set(newIds));
+        return;
+      }
+
       // Select all
       if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
         e.preventDefault();
-        const project = useProjectStore.getState().project;
         const clip = project.tracks.flatMap((t) => t.clips).find((c) => c.id === activeClipId);
         if (clip) {
-          useUiStore.getState().setSelectedNoteIds(new Set(clip.notes.map((n) => n.id)));
+          setSelectedNoteIds(new Set(clip.notes.map((n) => n.id)));
         }
         return;
       }

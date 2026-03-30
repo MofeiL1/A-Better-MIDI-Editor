@@ -82,4 +82,5 @@ export type BendPoint = {
 export type ProjectSnapshot = {
   timestamp: number;
   state: Omit<Project, 'history' | 'redoStack'>;
+  selectedNoteIds: string[];
 };

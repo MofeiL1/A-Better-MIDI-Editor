@@ -6,10 +6,20 @@ import { MobileApp } from './components/mobile/MobileApp';
 import { useKeyboard } from './hooks/useKeyboard';
 import { usePlayback } from './hooks/usePlayback';
 import { useIsMobile } from './hooks/useIsMobile';
+import { onSamplerReady, preloadPianoSampler } from './audio/pianoSampler';
+import { useUiStore } from './store/uiStore';
+
+// Start loading the piano sampler immediately on app start
+preloadPianoSampler();
 
 const DesktopApp: React.FC = () => {
   useKeyboard();
   const { togglePlayback } = usePlayback();
+  const setSamplerReady = useUiStore((s) => s.setSamplerReady);
+
+  useEffect(() => {
+    onSamplerReady(() => setSamplerReady(true));
+  }, [setSamplerReady]);
 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
@@ -27,9 +37,10 @@ const DesktopApp: React.FC = () => {
       display: 'flex',
       flexDirection: 'column',
       height: '100vh',
-      backgroundColor: '#161616',
-      color: 'rgba(255, 255, 255, 0.85)',
+      backgroundColor: '#242424',
+      color: '#ccc',
       overflow: 'hidden',
+      fontFamily: '-apple-system, "SF Pro Text", "Helvetica Neue", sans-serif',
     }}>
       <TransportBar />
       <Toolbar />

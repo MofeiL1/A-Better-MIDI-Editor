@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { ToolMode, Viewport, SnapResolution } from '../types/ui';
+import type { Note } from '../types/model';
 
 interface UiStore {
   tool: ToolMode;
@@ -15,6 +16,19 @@ interface UiStore {
   scaleRoot: number; // 0-11
   scaleMode: string;
 
+  // Audio latency (lookAhead in seconds).
+  audioLatency: number;
+  samplerReady: boolean;
+
+  // Copy/paste clipboard (pure UI, not undoable)
+  clipboard: Note[];
+
+  // Velocity drag highlight — which note is being velocity-dragged (shown in NoteLayer)
+  velocityDragNoteId: string | null;
+
+  // Hover highlight — bidirectional between NoteLayer and VelocityLane
+  hoveredNoteId: string | null;
+
   setTool: (tool: ToolMode) => void;
   setViewport: (v: Partial<Viewport>) => void;
   setSelectedNoteIds: (ids: Set<string>) => void;
@@ -26,6 +40,11 @@ interface UiStore {
   setIsPlaying: (v: boolean) => void;
   setPlayheadTick: (t: number) => void;
   setScale: (root: number, mode: string) => void;
+  setAudioLatency: (v: number) => void;
+  setSamplerReady: (v: boolean) => void;
+  setClipboard: (notes: Note[]) => void;
+  setVelocityDragNoteId: (id: string | null) => void;
+  setHoveredNoteId: (id: string | null) => void;
 }
 
 export const useUiStore = create<UiStore>((set) => ({
@@ -44,6 +63,11 @@ export const useUiStore = create<UiStore>((set) => ({
   playheadTick: 0,
   scaleRoot: 0, // C
   scaleMode: 'major',
+  audioLatency: 0.05,
+  samplerReady: false,
+  clipboard: [],
+  velocityDragNoteId: null,
+  hoveredNoteId: null,
 
   setTool: (tool) => set({ tool }),
   setViewport: (v) =>
@@ -63,4 +87,9 @@ export const useUiStore = create<UiStore>((set) => ({
   setIsPlaying: (v) => set({ isPlaying: v }),
   setPlayheadTick: (t) => set({ playheadTick: t }),
   setScale: (root, mode) => set({ scaleRoot: root, scaleMode: mode }),
+  setAudioLatency: (v) => set({ audioLatency: v }),
+  setSamplerReady: (v) => set({ samplerReady: v }),
+  setClipboard: (notes) => set({ clipboard: notes }),
+  setVelocityDragNoteId: (id) => set({ velocityDragNoteId: id }),
+  setHoveredNoteId: (id) => set({ hoveredNoteId: id }),
 }));

@@ -3,39 +3,31 @@ import * as Tone from 'tone';
 import { useProjectStore } from '../store/projectStore';
 import { useUiStore } from '../store/uiStore';
 import { tickToSeconds } from '../utils/timing';
+import { getPianoSampler, getSamplerSync } from '../audio/pianoSampler';
 
 export function usePlayback() {
-  const synthRef = useRef<Tone.PolySynth | null>(null);
   const animRef = useRef<number>(0);
   const startTickRef = useRef(0);
   const isPlayingRef = useRef(false);
 
-  const getSynth = useCallback(() => {
-    if (!synthRef.current) {
-      synthRef.current = new Tone.PolySynth(Tone.Synth, {
-        oscillator: { type: 'triangle' },
-        envelope: { attack: 0.01, decay: 0.15, sustain: 0.4, release: 0.3 },
-      }).toDestination();
-      synthRef.current.volume.value = -6;
-    }
-    return synthRef.current;
-  }, []);
-
   const play = useCallback(async () => {
-    // Ensure AudioContext is running (required by browsers on user gesture)
     await Tone.start();
 
-    const synth = getSynth();
     const { project } = useProjectStore.getState();
-    const { activeClipId, playheadTick, setIsPlaying, setPlayheadTick } = useUiStore.getState();
+    const { activeClipId, playheadTick, setIsPlaying, setPlayheadTick, audioLatency } = useUiStore.getState();
 
     const clip = project.tracks.flatMap((t) => t.clips).find((c) => c.id === activeClipId);
     if (!clip || clip.notes.length === 0) return;
 
+    const sampler = await getPianoSampler();
+
+    const ctx = Tone.getContext();
+    ctx.lookAhead = audioLatency;
+    ctx.updateInterval = Math.max(0.01, audioLatency / 2);
+
     const bpm = project.tempoChanges[0]?.bpm ?? 120;
     const tpb = project.ticksPerBeat;
 
-    // Reset transport
     const transport = Tone.getTransport();
     transport.stop();
     transport.cancel();
@@ -45,26 +37,29 @@ export function usePlayback() {
     startTickRef.current = playheadTick;
     const startOffset = tickToSeconds(playheadTick, bpm, tpb);
 
-    // Schedule all notes
     for (const note of clip.notes) {
       const noteStartSec = tickToSeconds(note.startTick, bpm, tpb) - startOffset;
       const noteDurSec = Math.max(0.05, tickToSeconds(note.duration, bpm, tpb));
       if (noteStartSec < 0) continue;
 
-      const freq = Tone.Frequency(note.pitch, 'midi').toFrequency();
+      const noteName = Tone.Frequency(note.pitch, 'midi').toNote();
       const vel = Math.max(0.01, note.velocity / 127);
 
-      // The `time` param from schedule() is the precise AudioContext time — pass it through
+      // Attack and Release scheduled separately so:
+      // - transport.cancel() can cancel future releases
+      // - releaseAll() can find active notes in _activeSources
       transport.schedule((time) => {
-        synth.triggerAttackRelease(freq, noteDurSec, time, vel);
+        sampler.triggerAttack(noteName, time, vel);
       }, noteStartSec);
+      transport.schedule((time) => {
+        sampler.triggerRelease(noteName, time);
+      }, noteStartSec + noteDurSec);
     }
 
     transport.start();
     isPlayingRef.current = true;
     setIsPlaying(true);
 
-    // Animate playhead
     const startTime = Tone.now();
     const tick = () => {
       if (!isPlayingRef.current) return;
@@ -74,13 +69,16 @@ export function usePlayback() {
       animRef.current = requestAnimationFrame(tick);
     };
     animRef.current = requestAnimationFrame(tick);
-  }, [getSynth]);
+  }, []);
 
   const stop = useCallback(() => {
     isPlayingRef.current = false;
     Tone.getTransport().stop();
     Tone.getTransport().cancel();
     cancelAnimationFrame(animRef.current);
+    // MIDI Note Off: release all voices with natural decay
+    const sampler = getSamplerSync();
+    if (sampler) sampler.releaseAll();
     useUiStore.getState().setIsPlaying(false);
   }, []);
 
@@ -96,7 +94,6 @@ export function usePlayback() {
     return () => {
       isPlayingRef.current = false;
       cancelAnimationFrame(animRef.current);
-      synthRef.current?.dispose();
     };
   }, []);
 

@@ -1,5 +1,7 @@
 import React, { useRef, useEffect, useCallback } from 'react';
 import type { Note } from '../../types/model';
+import { useProjectStore } from '../../store/projectStore';
+import { useUiStore } from '../../store/uiStore';
 
 interface VelocityLaneProps {
   width: number;
@@ -11,6 +13,23 @@ interface VelocityLaneProps {
   onVelocityChange?: (noteId: string, velocity: number) => void;
 }
 
+// Match NoteLayer color scheme: purple(low) → blue → green → yellow → orange → red(high)
+function velocityToHue(velocity: number): number {
+  const v = velocity / 127;
+  return 270 - v * 270;
+}
+
+function velBarColor(velocity: number, selected: boolean, highlighted: boolean): string {
+  const hue = velocityToHue(velocity);
+  const v = velocity / 127;
+  if (highlighted) return `hsl(${hue}, 90%, 72%)`;
+  if (selected) return `hsl(${hue}, 75%, 58%)`;
+  return `hsl(${hue}, 55%, ${28 + v * 18}%)`;
+}
+
+const GRAB_ZONE = 8; // pixels from top of bar where grab is possible
+const BAR_WIDTH = 6; // fixed thin bar width for clarity with overlaps
+
 export const VelocityLane: React.FC<VelocityLaneProps> = ({
   width,
   height,
@@ -21,87 +40,234 @@ export const VelocityLane: React.FC<VelocityLaneProps> = ({
   onVelocityChange,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const isDragging = useRef(false);
+  const dragNoteId = useRef<string | null>(null);
+  const canvasRect = useRef<DOMRect | null>(null);
+  const beginDrag = useProjectStore((s) => s.beginDrag);
+  const endDrag = useProjectStore((s) => s.endDrag);
+  const setVelocityDragNoteId = useUiStore((s) => s.setVelocityDragNoteId);
+  const velocityDragNoteId = useUiStore((s) => s.velocityDragNoteId);
+  const hoveredNoteId = useUiStore((s) => s.hoveredNoteId);
 
+  // Compute bar x position (center of note start)
+  const barX = useCallback((note: Note) => {
+    return (note.startTick - scrollX) * pixelsPerTick;
+  }, [scrollX, pixelsPerTick]);
+
+  // Compute bar top y from velocity
+  const barTopY = useCallback((velocity: number) => {
+    return height - (velocity / 127) * (height - 4);
+  }, [height]);
+
+  // Hit test: match the draw order (startTick asc → velocity desc → pitch asc).
+  // Iterate in reverse so the topmost (last-drawn) bar is checked first.
+  // Among grab-zone hits, prefer selected notes when distances are similar.
+  const hitTestVelocityBar = useCallback((mx: number, my: number): Note | null => {
+    const sorted = [...notes].sort(
+      (a, b) => a.startTick - b.startTick || b.velocity - a.velocity || a.pitch - b.pitch
+    );
+
+    let bestNote: Note | null = null;
+    let bestDist = Infinity;
+
+    // Reverse: last-drawn (visually on top) first
+    for (let i = sorted.length - 1; i >= 0; i--) {
+      const note = sorted[i];
+      const x = barX(note);
+      const bw = Math.max(note.duration * pixelsPerTick, BAR_WIDTH);
+      if (mx < x - 2 || mx > x + bw + 2) continue;
+
+      const topY = barTopY(note.velocity);
+      const distY = Math.abs(my - topY);
+
+      if (distY <= GRAB_ZONE) {
+        const isSelected = selectedNoteIds.has(note.id);
+        const prevSelected = bestNote ? selectedNoteIds.has(bestNote.id) : false;
+
+        if (distY < bestDist - 3) {
+          bestDist = distY;
+          bestNote = note;
+        } else if (distY <= bestDist + 3) {
+          if (isSelected && !prevSelected) {
+            bestDist = distY;
+            bestNote = note;
+          } else if (!prevSelected && distY < bestDist) {
+            bestDist = distY;
+            bestNote = note;
+          }
+        }
+      }
+    }
+    return bestNote;
+  }, [notes, barX, barTopY, pixelsPerTick, selectedNoteIds]);
+
+  // Body hit test: any point on a bar's visible area, respecting draw order.
+  // Reverse-iterate the draw order so visually topmost bar wins.
+  const hitTestBarBody = useCallback((mx: number, my: number): Note | null => {
+    const sorted = [...notes].sort(
+      (a, b) => a.startTick - b.startTick || b.velocity - a.velocity || a.pitch - b.pitch
+    );
+    for (let i = sorted.length - 1; i >= 0; i--) {
+      const note = sorted[i];
+      const x = barX(note);
+      const bw = Math.max(note.duration * pixelsPerTick, BAR_WIDTH);
+      if (mx < x - 1 || mx > x + bw + 1) continue;
+      const topY = barTopY(note.velocity);
+      if (my >= topY && my <= height) return note;
+    }
+    return null;
+  }, [notes, barX, barTopY, pixelsPerTick, height]);
+
+  // --- Drawing ---
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
+    if (!canvas || width <= 0 || height <= 0) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
     const dpr = window.devicePixelRatio || 1;
-    canvas.width = width * dpr;
-    canvas.height = height * dpr;
+    canvas.width = Math.round(width * dpr);
+    canvas.height = Math.round(height * dpr);
     ctx.scale(dpr, dpr);
 
     // Background
-    ctx.fillStyle = '#141416';
+    ctx.fillStyle = '#1e1e1e';
     ctx.fillRect(0, 0, width, height);
 
-    // Guide lines
+    // Guide lines at 32, 64, 96
     for (const v of [32, 64, 96]) {
-      const y = height - (v / 127) * (height - 8);
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.04)';
+      const y = barTopY(v);
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.06)';
       ctx.lineWidth = 0.5;
+      ctx.setLineDash([2, 4]);
       ctx.beginPath();
       ctx.moveTo(0, y);
       ctx.lineTo(width, y);
       ctx.stroke();
     }
+    ctx.setLineDash([]);
 
     const minVisibleTick = scrollX;
     const maxVisibleTick = scrollX + width / pixelsPerTick;
 
-    for (const note of notes) {
-      if (note.startTick + note.duration < minVisibleTick || note.startTick > maxVisibleTick) continue;
+    // Sort by velocity descending: highest velocity drawn first (background),
+    // lowest velocity drawn last (foreground). This ensures no bar is ever hidden.
+    const sortedNotes = [...notes]
+      .filter((n) => n.startTick + n.duration >= minVisibleTick && n.startTick <= maxVisibleTick)
+      .sort((a, b) => a.startTick - b.startTick || b.velocity - a.velocity || a.pitch - b.pitch);
 
-      const x = (note.startTick - scrollX) * pixelsPerTick;
-      const barH = (note.velocity / 127) * (height - 8);
-      const barW = Math.max(note.duration * pixelsPerTick - 2, 3);
-      const selected = selectedNoteIds.has(note.id);
+    const activeHighlightId = velocityDragNoteId || hoveredNoteId;
 
-      const v = note.velocity / 127;
-      const hue = selected ? 42 : 210 + v * 10;
-      const sat = selected ? 85 : 55 + v * 15;
-      const lig = selected ? 55 : 40 + v * 18;
+    for (const note of sortedNotes) {
+      const isHighlighted = note.id === velocityDragNoteId;
+      const isHovered = !isHighlighted && note.id === activeHighlightId;
+      const isSelected = selectedNoteIds.has(note.id);
 
-      // Bar with rounded top
-      ctx.beginPath();
-      ctx.roundRect(x + 0.5, height - barH, barW, barH, [3, 3, 0, 0]);
-      ctx.fillStyle = `hsl(${hue}, ${sat}%, ${lig}%)`;
-      ctx.fill();
+      const x = Math.round(barX(note));
+      const topY = barTopY(note.velocity);
+      const barH = height - topY;
+      const bw = Math.max(Math.round(note.duration * pixelsPerTick), BAR_WIDTH);
 
-      // Top glow
-      const grad = ctx.createLinearGradient(x, height - barH, x, height - barH + 6);
-      grad.addColorStop(0, 'rgba(255, 255, 255, 0.15)');
-      grad.addColorStop(1, 'rgba(255, 255, 255, 0)');
-      ctx.fillStyle = grad;
-      ctx.fill();
+      // Bar body — no gap between adjacent notes
+      ctx.fillStyle = velBarColor(note.velocity, isSelected, isHighlighted || isHovered);
+      ctx.fillRect(x, topY, bw, barH);
 
-      // Value label
-      if (barW > 16) {
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
-        ctx.font = '500 9px Inter, -apple-system, sans-serif';
-        ctx.fillText(String(note.velocity), x + 2, height - barH - 3);
+      // Top cap + left edge — dark border for unselected, bright for selected/highlighted
+      if (isHighlighted || isSelected) {
+        ctx.fillStyle = `rgba(255, 255, 255, ${isHighlighted ? 0.6 : 0.35})`;
+      } else {
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+      }
+      ctx.fillRect(x + 2, topY, bw - 2, 2); // top (skip left corner)
+      ctx.fillRect(x, topY, 2, barH);      // left (full height)
+
+      // Velocity value label — inside bar top-left, or above if bar too short
+      if (bw > 12 || isHighlighted) {
+        ctx.fillStyle = isHighlighted ? 'rgba(255, 255, 255, 0.9)' : 'rgba(255, 255, 255, 0.5)';
+        ctx.font = `${isHighlighted ? '600' : '500'} 9px -apple-system, "SF Pro Text", sans-serif`;
+        const labelY = barH >= 14 ? topY + 12 : topY - 3;
+        ctx.fillText(String(note.velocity), x + 4, labelY);
       }
     }
-  }, [width, height, scrollX, pixelsPerTick, notes, selectedNoteIds]);
+  }, [width, height, scrollX, pixelsPerTick, notes, selectedNoteIds, velocityDragNoteId, hoveredNoteId, barX, barTopY]);
 
-  const handleVelocityEdit = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+  // --- Interaction ---
+  const handleMouseDown = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    canvasRect.current = rect;
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+
+    // Body hit: select the visually topmost bar at this position
+    const bodyHit = hitTestBarBody(mx, my);
+    if (bodyHit) {
+      const { selectedNoteIds: sel, setSelectedNoteIds: setSel } = useUiStore.getState();
+      if (e.shiftKey) {
+        const next = new Set(sel);
+        if (next.has(bodyHit.id)) next.delete(bodyHit.id); else next.add(bodyHit.id);
+        setSel(next);
+      } else {
+        setSel(new Set([bodyHit.id]));
+      }
+    }
+
+    // Grab zone hit: only start drag if near the bar top
+    const grabHit = hitTestVelocityBar(mx, my);
+    if (!grabHit) return;
+
+    // Start dragging this specific note's velocity — relative mode (no jump)
+    dragNoteId.current = grabHit.id;
+    beginDrag();
+    setVelocityDragNoteId(grabHit.id);
+
+    // Ensure dragged note is selected
+    const { selectedNoteIds: sel2, setSelectedNoteIds: setSel2 } = useUiStore.getState();
+    if (!sel2.has(grabHit.id)) {
+      setSel2(e.shiftKey ? new Set([...sel2, grabHit.id]) : new Set([grabHit.id]));
+    }
+
+    // Record mouse Y at grab time and the note's current velocity
+    const startClientY = e.clientY;
+    const startVelocity = grabHit.velocity;
+    const pxPerVel = (height - 4) / 127;
+
+    const onMove = (ev: MouseEvent) => {
+      if (!dragNoteId.current) return;
+      const deltaY = startClientY - ev.clientY;
+      const deltaVel = deltaY / pxPerVel;
+      const vel = Math.round(Math.max(1, Math.min(127, startVelocity + deltaVel)));
+      onVelocityChange?.(dragNoteId.current, vel);
+    };
+
+    const onUp = () => {
+      dragNoteId.current = null;
+      setVelocityDragNoteId(null);
+      endDrag();
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  }, [hitTestVelocityBar, hitTestBarBody, height, onVelocityChange, beginDrag, endDrag, setVelocityDragNoteId]);
+
+  // Update cursor and hover highlight
+  const handleMouseMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (dragNoteId.current) return;
     const rect = e.currentTarget.getBoundingClientRect();
     const mx = e.clientX - rect.left;
     const my = e.clientY - rect.top;
-    const velocity = Math.round(Math.max(1, Math.min(127, ((height - my) / height) * 127)));
+    const grabHit = hitTestVelocityBar(mx, my);
+    (e.currentTarget as HTMLCanvasElement).style.cursor = grabHit ? 'ns-resize' : 'default';
+    // Hover: broader hit test on bar body
+    const hoverHit = hitTestBarBody(mx, my);
+    useUiStore.getState().setHoveredNoteId(hoverHit?.id ?? null);
+  }, [hitTestVelocityBar, hitTestBarBody]);
 
-    for (const note of notes) {
-      const x = (note.startTick - scrollX) * pixelsPerTick;
-      const w = Math.max(note.duration * pixelsPerTick, 3);
-      if (mx >= x && mx <= x + w) {
-        onVelocityChange?.(note.id, velocity);
-        break;
-      }
+  const handleMouseLeave = useCallback(() => {
+    if (!dragNoteId.current) {
+      useUiStore.getState().setHoveredNoteId(null);
     }
-  }, [scrollX, pixelsPerTick, notes, height, onVelocityChange]);
+  }, []);
 
   return (
     <canvas
@@ -109,13 +275,12 @@ export const VelocityLane: React.FC<VelocityLaneProps> = ({
       style={{
         width,
         height,
-        cursor: 'ns-resize',
-        borderTop: '1px solid rgba(255, 255, 255, 0.04)',
+        cursor: 'default',
+        borderTop: '1px solid #333',
       }}
-      onMouseDown={(e) => { isDragging.current = true; handleVelocityEdit(e); }}
-      onMouseMove={(e) => { if (isDragging.current) handleVelocityEdit(e); }}
-      onMouseUp={() => { isDragging.current = false; }}
-      onMouseLeave={() => { isDragging.current = false; }}
+      onMouseDown={handleMouseDown}
+      onMouseMove={handleMouseMove}
+      onMouseLeave={handleMouseLeave}
     />
   );
 };
