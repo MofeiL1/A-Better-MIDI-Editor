@@ -50,6 +50,17 @@
 - [x] README 添加无生成式 AI 声明
 - [x] 页面刷新/关闭前弹出浏览器确认对话框，防止意外丢失未导出的工作
 
+### 2026-03-30 完成（第三批）
+
+- [x] 重命名系统（项目名可编辑，铅笔 SVG 图标，Enter/Escape 确认，focus 时图标亮）
+- [x] 可更改 Time Signature（分子/分母下拉选择，影响 Grid/Ruler/PlayheadHandle，公式 ticksPerBeat*numerator*4/denominator）
+- [x] BPM 可编辑（导入后可修改，带 undo）
+- [x] 播放控件/撤销重做图标全部换为 SVG（禁止代码中使用 emoji）
+- [x] 所有控件按钮 hover 高亮效果
+- [x] 播放/空格 bug 修复（capture phase 拦截 + stopPropagation，按钮 tabIndex={-1}，消除双重 toggle）
+- [x] 钢琴键 Shift+拖选改为范围模式（起始→当前 pitch 连续范围，反向缩小，不再 toggle 抖动）
+- [x] 钢琴键选区操作纳入 undo（beginDrag/endDrag 包裹整个手势）
+
 ## 当前在做
 
 （无 — 等待用户反馈）

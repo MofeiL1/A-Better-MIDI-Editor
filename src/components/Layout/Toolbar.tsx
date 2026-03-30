@@ -53,6 +53,7 @@ export const Toolbar: React.FC = () => {
         {TOOLS.map((t) => (
           <button
             key={t.mode}
+            tabIndex={-1}
             onClick={() => setTool(t.mode)}
             title={`${t.label} (${t.shortcut})`}
             style={{
@@ -65,6 +66,7 @@ export const Toolbar: React.FC = () => {
               fontWeight: 500,
               fontFamily: 'inherit',
               cursor: 'pointer',
+              outline: 'none',
               transition: 'background-color 0.1s',
             }}
           >

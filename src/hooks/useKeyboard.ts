@@ -9,15 +9,10 @@ export function useKeyboard() {
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      const { setTool, selectedNoteIds, clearSelection, activeClipId, clipboard, setClipboard, setSelectedNoteIds, playheadTick, isPlaying, setIsPlaying } = useUiStore.getState();
+      const { setTool, selectedNoteIds, clearSelection, activeClipId, clipboard, setClipboard, setSelectedNoteIds, playheadTick } = useUiStore.getState();
       const { project, pasteNotes } = useProjectStore.getState();
 
-      // Space: play/stop — always intercept to prevent dropdown/button activation
-      if (e.key === ' ') {
-        e.preventDefault();
-        setIsPlaying(!isPlaying);
-        return;
-      }
+      // Space is handled in App.tsx via togglePlayback() — don't duplicate here
 
       // Tool switching
       if (e.key === '1') { setTool('select'); return; }

@@ -16,6 +16,7 @@ const btnStyle: React.CSSProperties = {
   cursor: 'pointer',
   fontFamily: '-apple-system, "SF Pro Text", "Helvetica Neue", sans-serif',
   lineHeight: 1,
+  outline: 'none',
 };
 
 const textBtnStyle: React.CSSProperties = {
@@ -141,11 +142,18 @@ export const TransportBar: React.FC = () => {
       {/* Transport controls — Logic Pro style */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 0 }}>
         {/* Rewind */}
-        <button onClick={handleStop} title="Go to Beginning" style={btnStyle}>
-          ⏮
+        <button tabIndex={-1} onClick={handleStop} title="Go to Beginning" style={btnStyle}
+          onMouseEnter={(e) => (e.currentTarget.style.color = '#fff')}
+          onMouseLeave={(e) => (e.currentTarget.style.color = '#aaa')}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+            <rect x="2" y="4" width="3" height="16" rx="1" />
+            <path d="M9 12l10-7v14L9 12z" />
+          </svg>
         </button>
         {/* Play/Pause */}
         <button
+          tabIndex={-1}
           onClick={togglePlayback}
           title={isPlaying ? 'Pause (Space)' : 'Play (Space)'}
           style={{
@@ -153,12 +161,28 @@ export const TransportBar: React.FC = () => {
             color: isPlaying ? '#4ade80' : '#aaa',
             fontSize: 15,
           }}
+          onMouseEnter={(e) => (e.currentTarget.style.color = isPlaying ? '#6aff9a' : '#fff')}
+          onMouseLeave={(e) => (e.currentTarget.style.color = isPlaying ? '#4ade80' : '#aaa')}
         >
-          {isPlaying ? '⏸' : '▶'}
+          {isPlaying ? (
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+              <rect x="5" y="4" width="4" height="16" rx="1" />
+              <rect x="15" y="4" width="4" height="16" rx="1" />
+            </svg>
+          ) : (
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+              <path d="M6 4l14 8-14 8V4z" />
+            </svg>
+          )}
         </button>
         {/* Stop */}
-        <button onClick={handleStop} title="Stop" style={btnStyle}>
-          ⏹
+        <button tabIndex={-1} onClick={handleStop} title="Stop" style={btnStyle}
+          onMouseEnter={(e) => (e.currentTarget.style.color = '#fff')}
+          onMouseLeave={(e) => (e.currentTarget.style.color = '#aaa')}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+            <rect x="4" y="4" width="16" height="16" rx="2" />
+          </svg>
         </button>
       </div>
 
@@ -268,6 +292,7 @@ export const TransportBar: React.FC = () => {
 
       {/* Undo/Redo */}
       <button
+        tabIndex={-1}
         onClick={undo}
         disabled={project.history.length === 0}
         style={{
@@ -275,10 +300,16 @@ export const TransportBar: React.FC = () => {
           color: project.history.length > 0 ? '#aaa' : '#555',
         }}
         title="Undo (Ctrl+Z)"
+        onMouseEnter={(e) => { if (project.history.length > 0) (e.currentTarget as HTMLElement).style.color = '#fff'; }}
+        onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = project.history.length > 0 ? '#aaa' : '#555'; }}
       >
-        ↩
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <polyline points="1 4 1 10 7 10" />
+          <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
+        </svg>
       </button>
       <button
+        tabIndex={-1}
         onClick={redo}
         disabled={project.redoStack.length === 0}
         style={{
@@ -286,8 +317,13 @@ export const TransportBar: React.FC = () => {
           color: project.redoStack.length > 0 ? '#aaa' : '#555',
         }}
         title="Redo (Ctrl+Y)"
+        onMouseEnter={(e) => { if (project.redoStack.length > 0) (e.currentTarget as HTMLElement).style.color = '#fff'; }}
+        onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = project.redoStack.length > 0 ? '#aaa' : '#555'; }}
       >
-        ↪
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <polyline points="23 4 23 10 17 10" />
+          <path d="M20.49 15a9 9 0 1 1-2.13-9.36L23 10" />
+        </svg>
       </button>
 
       {/* Spacer */}
@@ -365,10 +401,16 @@ export const TransportBar: React.FC = () => {
         onChange={handleImport}
         style={{ display: 'none' }}
       />
-      <button onClick={() => fileInputRef.current?.click()} style={textBtnStyle}>
+      <button tabIndex={-1} onClick={() => fileInputRef.current?.click()} style={textBtnStyle}
+        onMouseEnter={(e) => (e.currentTarget.style.color = '#fff')}
+        onMouseLeave={(e) => (e.currentTarget.style.color = '#999')}
+      >
         Import
       </button>
-      <button onClick={handleExport} style={textBtnStyle}>
+      <button tabIndex={-1} onClick={handleExport} style={textBtnStyle}
+        onMouseEnter={(e) => (e.currentTarget.style.color = '#fff')}
+        onMouseLeave={(e) => (e.currentTarget.style.color = '#999')}
+      >
         Export
       </button>
       {/* Track picker modal */}

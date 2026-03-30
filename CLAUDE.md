@@ -50,10 +50,17 @@ npm run build        # TypeScript 检查 + Vite 构建
 
 ## 分支
 
-- 开发分支: `claude/midi-editor-product-spec-dbOah`
+- 默认/开发分支: `main`
+
+## 代码规范
+
+- **禁止在代码和 UI 中使用 emoji**：所有图标必须用 SVG。Emoji 只允许出现在文档（README、TASKS.md 等）的文字说明中。
+- 按钮图标一律用内联 SVG（`fill="currentColor"` 或 `stroke="currentColor"`），跟随文字颜色变化。
 
 ## 已知注意事项
 
 - Tone.js Transport.schedule 回调的 `time` 参数必须传给 triggerAttackRelease，否则音符在错误的 AudioContext 时间触发（无声）
-- MIDI 导入时 `midi.header.ppq` 需要 `as unknown as Record<string, unknown>` 类型转换
+- MIDI 导入时 `midi.header.ppq` 需要 `Object.defineProperty` 覆盖（getter-only 属性）
 - `midi.toArray()` 返回值需要 `new Uint8Array(arr)` 包装才能用于 Blob
+- 播放停止时用 `triggerAttack` + 单独调度 `triggerRelease`（不用 `triggerAttackRelease`），停止时 `sampler.releaseAll()` 才能正确发送 Note Off
+- 空格键必须用 capture phase 拦截（`addEventListener(..., true)`），防止浏览器默认激活聚焦按钮导致 togglePlayback 被调用两次

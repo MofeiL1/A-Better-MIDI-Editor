@@ -32,6 +32,8 @@ export const PianoKeys: React.FC<PianoKeysProps> = ({
   const activeClip = useProjectStore((s) =>
     s.project.tracks.flatMap((t) => t.clips).find((c) => c.id === activeClipId)
   );
+  const beginDrag = useProjectStore((s) => s.beginDrag);
+  const endDrag = useProjectStore((s) => s.endDrag);
   const notes = activeClip?.notes ?? [];
 
   const selectedPitches = new Set<number>();
@@ -104,29 +106,76 @@ export const PianoKeys: React.FC<PianoKeysProps> = ({
 
     setPressedPitch(pitch);
     attackPitch(pitch);
-    selectAtPitch(pitch, e.shiftKey);
 
     const shiftHeld = e.shiftKey;
 
-    const onMove = (ev: MouseEvent) => {
-      const p = yToPitchLocal(ev.clientY);
-      if (p === null) return;
-      setPressedPitch(p);
-      setHoveredPitch(p);
-      attackPitch(p); // glissando: triggers new note, releases previous
-      selectAtPitch(p, shiftHeld);
-    };
+    if (shiftHeld) {
+      // Shift+drag: select range from start pitch to current pitch
+      beginDrag();
+      const selSnapshot = new Set(useUiStore.getState().selectedNoteIds);
+      const startPitch = pitch;
+      let lastAppliedMin = pitch;
+      let lastAppliedMax = pitch;
 
-    const onUp = () => {
-      setPressedPitch(null);
-      releasePitch();
-      document.removeEventListener('mousemove', onMove);
-      document.removeEventListener('mouseup', onUp);
-    };
+      const applyRange = (currentPitch: number) => {
+        const lo = Math.min(startPitch, currentPitch);
+        const hi = Math.max(startPitch, currentPitch);
+        if (lo === lastAppliedMin && hi === lastAppliedMax) return;
+        lastAppliedMin = lo;
+        lastAppliedMax = hi;
+        const next = new Set(selSnapshot);
+        for (const n of notes) {
+          if (n.pitch >= lo && n.pitch <= hi) next.add(n.id);
+        }
+        useUiStore.getState().setSelectedNoteIds(next);
+      };
+      applyRange(pitch);
 
-    document.addEventListener('mousemove', onMove);
-    document.addEventListener('mouseup', onUp);
-  }, [yToPitchLocal, attackPitch, releasePitch, selectAtPitch]);
+      const onMove = (ev: MouseEvent) => {
+        const p = yToPitchLocal(ev.clientY);
+        if (p === null) return;
+        setPressedPitch(p);
+        setHoveredPitch(p);
+        attackPitch(p);
+        applyRange(p);
+      };
+
+      const onUp = () => {
+        setPressedPitch(null);
+        releasePitch();
+        endDrag();
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+      };
+
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    } else {
+      // Normal drag: one undo step, select only current pitch, glissando
+      beginDrag();
+      selectAtPitch(pitch, false);
+
+      const onMove = (ev: MouseEvent) => {
+        const p = yToPitchLocal(ev.clientY);
+        if (p === null) return;
+        setPressedPitch(p);
+        setHoveredPitch(p);
+        attackPitch(p);
+        selectAtPitch(p, false);
+      };
+
+      const onUp = () => {
+        setPressedPitch(null);
+        releasePitch();
+        endDrag();
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+      };
+
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    }
+  }, [yToPitchLocal, attackPitch, releasePitch, selectAtPitch, notes, beginDrag, endDrag]);
 
   // Hover
   const handleMouseMove = useCallback((e: React.MouseEvent) => {

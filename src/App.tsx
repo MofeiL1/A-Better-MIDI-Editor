@@ -29,14 +29,16 @@ const DesktopApp: React.FC = () => {
   }, []);
 
   useEffect(() => {
+    // Capture phase: intercept space BEFORE browser activates focused buttons
     const handleKey = (e: KeyboardEvent) => {
       if (e.key === ' ' && !(e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement)) {
         e.preventDefault();
+        e.stopPropagation();
         togglePlayback();
       }
     };
-    window.addEventListener('keydown', handleKey);
-    return () => window.removeEventListener('keydown', handleKey);
+    window.addEventListener('keydown', handleKey, true); // capture phase
+    return () => window.removeEventListener('keydown', handleKey, true);
   }, [togglePlayback]);
 
   return (
