@@ -92,9 +92,15 @@ export const KeyStrip: React.FC<KeyStripProps> = ({
       return;
     }
 
-    // ─── Continuous rendering: no hard boundaries ───
+    // ─── Region rendering ───
+    // Stable regions: solid fill with hard edges.
+    // Transition/ambiguous regions: gradient fade at edges to show uncertainty.
     const y = 1;
     const h = height - 2;
+
+    const GRAD_RATIO = 0.35;
+    const MAX_GRAD_PX = 80;
+    const MIN_GRAD_PX = 16;
 
     for (let ri = 0; ri < regions.length; ri++) {
       const region = regions[ri];
@@ -111,66 +117,50 @@ export const KeyStrip: React.FC<KeyStripProps> = ({
       const baseAlpha = 0.25 + prob * 0.40;
       const alpha = isHovered ? Math.min(0.75, baseAlpha + 0.12) : baseAlpha;
 
-      const prevRegion = ri > 0 ? regions[ri - 1] : null;
-      const nextRegion = ri < regions.length - 1 ? regions[ri + 1] : null;
-      const hasPrevTransition = prevRegion && (prevRegion.bestKey.root !== root || prevRegion.bestKey.mode !== region.bestKey.mode);
-      const hasNextTransition = nextRegion && (nextRegion.bestKey.root !== root || nextRegion.bestKey.mode !== region.bestKey.mode);
+      const isTransition = region.type === 'transition' || region.isAmbiguous;
 
-      const GRAD_RATIO = 0.25;
-      const MAX_GRAD_PX = 60;
-      const MIN_GRAD_PX = 12;
-
-      const regionW = regionEndX - regionStartX;
-
-      let leftGradPx = 0;
-      if (hasPrevTransition && prevRegion) {
-        const prevW = (prevRegion.endTick - prevRegion.startTick) * pixelsPerTick;
-        const shorter = Math.min(regionW, prevW);
-        leftGradPx = Math.max(MIN_GRAD_PX, Math.min(MAX_GRAD_PX, shorter * GRAD_RATIO));
-      }
-
-      let rightGradPx = 0;
-      if (hasNextTransition && nextRegion) {
-        const nextW = (nextRegion.endTick - nextRegion.startTick) * pixelsPerTick;
-        const shorter = Math.min(regionW, nextW);
-        rightGradPx = Math.max(MIN_GRAD_PX, Math.min(MAX_GRAD_PX, shorter * GRAD_RATIO));
-      }
-
-      // Core fill
-      const coreLeft = regionStartX + leftGradPx;
-      const coreRight = regionEndX - rightGradPx;
-      if (coreRight > coreLeft) {
+      if (!isTransition) {
+        // Stable region: solid fill, hard edges
         ctx.fillStyle = `hsla(${c.h}, ${c.s}%, ${c.l}%, ${alpha})`;
-        ctx.fillRect(coreLeft, y, coreRight - coreLeft, h);
-      }
+        ctx.fillRect(regionStartX, y, regionEndX - regionStartX, h);
+      } else {
+        // Transition/ambiguous region: fade in from left edge, fade out at right edge
+        const regionW = regionEndX - regionStartX;
+        const gradPx = Math.max(MIN_GRAD_PX, Math.min(MAX_GRAD_PX, regionW * GRAD_RATIO));
 
-      // Left gradient
-      if (leftGradPx > 0 && prevRegion) {
-        const pc = KEY_COLORS[prevRegion.bestKey.root] ?? { h: 210, s: 50, l: 50 };
-        const prevAlpha = 0.25 + prevRegion.bestKeyProbability * 0.40;
-        const grad = ctx.createLinearGradient(regionStartX, 0, regionStartX + leftGradPx, 0);
-        grad.addColorStop(0, `hsla(${pc.h}, ${pc.s}%, ${pc.l}%, ${prevAlpha})`);
-        grad.addColorStop(1, `hsla(${c.h}, ${c.s}%, ${c.l}%, ${alpha})`);
-        ctx.fillStyle = grad;
-        ctx.fillRect(regionStartX, y, leftGradPx, h);
-      } else if (leftGradPx === 0 && regionStartX > 0) {
-        ctx.fillStyle = `hsla(${c.h}, ${c.s}%, ${c.l}%, ${alpha})`;
-        ctx.fillRect(regionStartX, y, Math.max(0, coreLeft - regionStartX), h);
-      }
+        const prevRegion = ri > 0 ? regions[ri - 1] : null;
+        const nextRegion = ri < regions.length - 1 ? regions[ri + 1] : null;
 
-      // Right gradient
-      if (rightGradPx > 0 && nextRegion) {
-        const nc = KEY_COLORS[nextRegion.bestKey.root] ?? { h: 210, s: 50, l: 50 };
-        const nextAlpha = 0.25 + nextRegion.bestKeyProbability * 0.40;
-        const gradStart = regionEndX - rightGradPx;
-        const grad = ctx.createLinearGradient(gradStart, 0, regionEndX, 0);
-        grad.addColorStop(0, `hsla(${c.h}, ${c.s}%, ${c.l}%, ${alpha})`);
-        grad.addColorStop(1, `hsla(${nc.h}, ${nc.s}%, ${nc.l}%, ${nextAlpha})`);
-        ctx.fillStyle = grad;
-        ctx.fillRect(gradStart, y, rightGradPx, h);
-      } else if (rightGradPx === 0) {
-        ctx.fillStyle = `hsla(${c.h}, ${c.s}%, ${c.l}%, ${alpha})`;
-        ctx.fillRect(Math.max(regionStartX, coreRight), y, regionEndX - Math.max(regionStartX, coreRight), h);
+        // Core fill (center)
+        const coreLeft = regionStartX + (prevRegion ? gradPx : 0);
+        const coreRight = regionEndX - (nextRegion ? gradPx : 0);
+        if (coreRight > coreLeft) {
+          ctx.fillStyle = `hsla(${c.h}, ${c.s}%, ${c.l}%, ${alpha})`;
+          ctx.fillRect(coreLeft, y, coreRight - coreLeft, h);
+        }
+
+        // Left gradient (fade from previous region's color)
+        if (prevRegion) {
+          const pc = KEY_COLORS[prevRegion.bestKey.root] ?? { h: 210, s: 50, l: 50 };
+          const prevAlpha = 0.25 + prevRegion.bestKeyProbability * 0.40;
+          const grad = ctx.createLinearGradient(regionStartX, 0, regionStartX + gradPx, 0);
+          grad.addColorStop(0, `hsla(${pc.h}, ${pc.s}%, ${pc.l}%, ${prevAlpha})`);
+          grad.addColorStop(1, `hsla(${c.h}, ${c.s}%, ${c.l}%, ${alpha})`);
+          ctx.fillStyle = grad;
+          ctx.fillRect(regionStartX, y, gradPx, h);
+        }
+
+        // Right gradient (fade into next region's color)
+        if (nextRegion) {
+          const nc = KEY_COLORS[nextRegion.bestKey.root] ?? { h: 210, s: 50, l: 50 };
+          const nextAlpha = 0.25 + nextRegion.bestKeyProbability * 0.40;
+          const gradStart = regionEndX - gradPx;
+          const grad = ctx.createLinearGradient(gradStart, 0, regionEndX, 0);
+          grad.addColorStop(0, `hsla(${c.h}, ${c.s}%, ${c.l}%, ${alpha})`);
+          grad.addColorStop(1, `hsla(${nc.h}, ${nc.s}%, ${nc.l}%, ${nextAlpha})`);
+          ctx.fillStyle = grad;
+          ctx.fillRect(gradStart, y, gradPx, h);
+        }
       }
     }
 
