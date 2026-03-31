@@ -14,46 +14,38 @@ As a musician, I always felt like the tools in mainstream DAWs weren't quite the
 
 作为一名音乐人，我总觉得主流软件提供的编辑工具还不够完美。想试着做一个更好的 MIDI 编辑器，于是开了这个项目。深色主题、参考专业 DAW 设计的编辑交互，以及一些自己的想法。还在持续开发中。
 
-## What's in it / 目前有什么
+## Features / 主要功能
 
-- **Chord Track with overlap-based detection** — Automatic chord detection based on note temporal overlap and beat-weight analysis (not fixed per-measure). Dedicated chord lane with draggable boundaries that move member notes. Click a chord to select all its notes.
-- **和弦轨道（基于重叠检测）** — 根据音符时间重叠和强弱拍权重自动检测和弦（非固定按小节）。独立和弦条，可拖动边界联动内部音符。点击和弦即选中所有和弦内音。
+- **Chord Track** — Automatic chord detection based on note temporal overlap and beat-weight analysis. Dedicated chord lane with draggable boundaries that move member notes. Click a chord to select all its notes.
+- **和弦轨道** — 根据音符时间重叠和强弱拍权重自动检测和弦。独立和弦条，可拖动边界联动内部音符。点击和弦即选中所有和弦内音。
 
-- **Smart Snap** — Zoom-adaptive grid that automatically adjusts snap resolution as you zoom in/out (1/32 to whole bar). Like Logic Pro's Smart snap mode.
-- **智能吸附** — 缩放自适应网格，放大时自动变细、缩小时自动变粗（1/32 到整小节），类似 Logic Pro 的 Smart 吸附模式。
+- **Chord analysis & resolution detection** — Chord-tone badges (R, 3, 5, 7...), Roman numeral analysis, resolution arrows (V-I, ii-V-I, tritone substitution). Optional jazz symbols (Settings).
+- **和弦分析与解决关系检测** — 和弦内音标签（R, 3, 5, 7...），Roman numeral 分析，解决关系箭头（V-I、ii-V-I、三全音替代）。可选 Jazz 符号（设置面板）。
 
-- **Jazz chord symbols** — Optional display mode (Settings) that converts standard chord notation to jazz symbols: maj7 to triangle-7, dim to degree sign, m7b5 to slashed-circle-7.
-- **Jazz 和弦符号** — 可选显示模式（设置面板），将标准和弦名转为 Jazz 符号：maj7 变 triangle-7，dim 变度数符号，m7b5 变斜线圆圈-7。
+- **Auto key detection** — Scores 72 candidates (12 roots x 6 modes) by note coverage and tonic chord presence. One-click confirm to lock.
+- **自动调性检测** — 对 72 个候选调打分，参考音符覆盖率和主和弦存在性。一键确认锁定。
 
-- **Alt+drag note duplication** — Hold Alt while dragging to copy notes (Logic Pro style). Ghost notes at the original position show move vs copy mode in real time.
-- **Alt+拖动复制音符** — 拖动时按住 Alt 复制音符（Logic Pro 风格）。原位 ghost 实时切换移动/复制样式。
+- **Scale degree notation** — Caret notation showing degrees relative to the major scale with accidentals. Bass notes always display their degree.
+- **音阶级数标注** — 相对大调音阶显示级数及升降号。最低音始终显示级数。
 
-- **Chord analysis & resolution detection** — Overlap-based chord detection with on-beat/off-beat weighting, chord-tone badges (R, 3, 5, 7...), Roman numeral analysis, and resolution arrows (V-I, ii-V-I, tritone substitution with correct target quality).
-- **和弦分析与解决关系检测** — 基于重叠的和弦检测（强弱拍权重），和弦内音标签（R, 3, 5, 7...），Roman numeral 分析，解决关系箭头（V-I、ii-V-I、三全音替代，根据目标和弦性质显示大小写）。
+### Also included / 其他功能
 
-- **Auto key detection** — Detects the most likely key from your notes. Scores 72 candidates (12 roots x 6 modes) by note coverage and tonic chord presence. One-click confirm to lock.
-- **自动调性检测** — 根据已有音符自动检测最可能的调性。对 72 个候选调（12 个根音 x 6 种调式）打分，参考音符覆盖率和主和弦存在性。一键确认锁定。
-
-- **Scale degree notation** — Standard caret (^) notation showing degrees relative to the major scale with accidentals. Bass notes always display their degree below the note.
-- **音阶级数标注** — 标准 ^ 记号，相对大调音阶显示级数及升降号。最低音始终在音符下方显示级数。
-
-- **Velocity-colored notes** — Note and velocity bar colors both reflect velocity (purple → red), with bidirectional hover highlight between the two.
-- **力度色谱音符** — 音符和力度柱颜色都映射力度值（紫→红），上下悬停联动高亮。
-
-- **Gesture-based undo** — Every drag gesture is a single undo step. Selection state is included in history.
-- **手势级撤销** — 每个拖拽手势是一步撤销。选区状态也纳入历史。
-
-- **Precise velocity editing** — Grab zone at bar top only. Relative drag with no jump on grab. Draw-order-aware hit testing so hidden bars can't be accidentally selected. Multi-note batch editing.
-- **精确的力度编辑** — 只有柱顶可抓取，相对拖拽无跳变，绘制顺序感知的碰撞检测防止误选被遮挡的柱，多音符批量编辑。
-
-- **MIDI import with track picker** — Multi-track files show a selection dialog. Empty conductor tracks are filtered automatically.
-- **带轨道选择的 MIDI 导入** — 多轨文件弹出选择对话框，空的指挥轨自动过滤。
-
-- **Interactive piano keyboard** — Hold to audition, drag for glissando, click to select all notes at a pitch. Labels follow the selected key.
-- **可交互的钢琴键盘** — 按住试听，拖动刮奏，点击选中同音高音符，标签跟随所选调式。
-
-- **Modifier tool switching** — Hold Shift in Pencil mode for temporary Pointer; hold Ctrl/Cmd in Pointer mode for temporary Pencil. Cursor updates in real time.
-- **修饰键临时工具切换** — Pencil 模式按住 Shift 临时切为 Pointer；Pointer 模式按住 Ctrl/Cmd 临时切为 Pencil。光标实时跟随。
+- Smart Snap — Zoom-adaptive grid, auto-adjusts resolution as you zoom (1/32 to whole bar).
+- 智能吸附 — 缩放自适应网格，放大时自动变细、缩小时自动变粗。
+- Alt+drag duplication — Copy notes Logic Pro style, ghost notes show move vs copy in real time.
+- Alt+拖动复制音符 — Logic Pro 风格，原位 ghost 实时切换移动/复制样式。
+- Velocity-colored notes with bidirectional hover highlight between note layer and velocity lane.
+- 力度色谱音符，音符层和力度柱双向悬停联动高亮。
+- Gesture-based undo — Every drag gesture is one undo step, selection state included in history.
+- 手势级撤销 — 每个拖拽手势一步撤销，选区状态纳入历史。
+- Precise velocity editing — Top-grab only, relative drag, draw-order-aware hit testing, batch editing.
+- 精确力度编辑 — 柱顶抓取，相对拖拽无跳变，绘制顺序感知碰撞检测，批量编辑。
+- MIDI import/export with multi-track picker.
+- 带轨道选择的 MIDI 导入导出。
+- Interactive piano keyboard — Hold to audition, drag for glissando, click to select by pitch.
+- 可交互钢琴键盘 — 按住试听，拖动刮奏，点击选中同音高音符。
+- Modifier tool switching — Shift for temporary Pointer, Ctrl/Cmd for temporary Pencil.
+- 修饰键临时工具切换。
 
 ## Shortcuts / 快捷键
 

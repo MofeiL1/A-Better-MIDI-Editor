@@ -187,6 +187,39 @@ export const PianoKeys: React.FC<PianoKeysProps> = ({
     setHoveredPitch(null);
   }, []);
 
+  // Touch support: native addEventListener to allow preventDefault on non-passive
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const onStart = (e: TouchEvent) => {
+      e.preventDefault();
+      const p = yToPitchLocal(e.touches[0].clientY);
+      if (p === null) return;
+      setPressedPitch(p);
+      attackPitch(p);
+    };
+    const onMove = (e: TouchEvent) => {
+      e.preventDefault();
+      const p = yToPitchLocal(e.touches[0].clientY);
+      if (p === null) return;
+      setPressedPitch(p);
+      attackPitch(p);
+    };
+    const onEnd = () => {
+      setPressedPitch(null);
+      setHoveredPitch(null);
+      releasePitch();
+    };
+    el.addEventListener('touchstart', onStart, { passive: false });
+    el.addEventListener('touchmove', onMove, { passive: false });
+    el.addEventListener('touchend', onEnd);
+    return () => {
+      el.removeEventListener('touchstart', onStart);
+      el.removeEventListener('touchmove', onMove);
+      el.removeEventListener('touchend', onEnd);
+    };
+  }, [yToPitchLocal, attackPitch, releasePitch]);
+
   // Cleanup on unmount
   useEffect(() => {
     return () => { releasePitch(); };

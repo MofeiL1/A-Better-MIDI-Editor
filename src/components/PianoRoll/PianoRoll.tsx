@@ -33,6 +33,8 @@ export const PianoRoll: React.FC = () => {
   const gridContainerRef = useRef<HTMLDivElement>(null);
   const canvasRect = useRef<DOMRect | null>(null);
   const [size, setSize] = useState({ width: 800, height: 500 });
+  const sizeRef = useRef(size);
+  sizeRef.current = size;
   const [velHeight, setVelHeight] = useState(DEFAULT_VEL_HEIGHT);
   const [cursor, setCursor] = useState<string>(PENCIL_CURSOR);
   const [selectBox, setSelectBox] = useState<SelectBox>(null);
@@ -611,6 +613,190 @@ export const PianoRoll: React.FC = () => {
     el.addEventListener('wheel', handleWheel, { passive: false });
     return () => el.removeEventListener('wheel', handleWheel);
   }, [handleWheel]);
+
+  // Touch: GarageBand-style — tap note to select, drag to move/resize, tap empty to scroll
+  // Expanded hit area (+8px) for fat fingers, 10px deadzone before committing to drag/scroll
+  const TOUCH_PAD = 12; // extra px around notes for touch hit
+  const TOUCH_DEADZONE = 10; // px movement before action starts
+
+  const touchState = useRef<{
+    phase: 'pending' | 'active';
+    startX: number;
+    startY: number;
+    hit: { note: Note; zone: 'body' | 'resize' | 'trim-start' } | null;
+    mode: 'scroll' | 'move' | 'resize' | 'trim-start';
+    noteId?: string;
+    noteStartTick?: number;
+    mouseTickOffset?: number;
+    mousePitchOffset?: number;
+  } | null>(null);
+
+  useEffect(() => {
+    const el = gridContainerRef.current;
+    if (!el) return;
+
+    // Touch hit test with expanded area
+    const touchHitTest = (mx: number, my: number, canvasH: number, vp: { scrollX: number; scrollY: number; pixelsPerTick: number; pixelsPerSemitone: number }, clipNotes: Note[]): { note: Note; zone: 'body' | 'resize' | 'trim-start' } | null => {
+      for (let i = clipNotes.length - 1; i >= 0; i--) {
+        const n = clipNotes[i];
+        const nx = (n.startTick - vp.scrollX) * vp.pixelsPerTick;
+        const nw = n.duration * vp.pixelsPerTick;
+        const ny = canvasH - (n.pitch - vp.scrollY + 1) * vp.pixelsPerSemitone;
+        const nh = vp.pixelsPerSemitone;
+        // Expanded hit area
+        if (mx >= nx - TOUCH_PAD && mx <= nx + nw + TOUCH_PAD && my >= ny - TOUCH_PAD && my <= ny + nh + TOUCH_PAD) {
+          const handleW = Math.max(8, Math.min(16, nw * 0.15)); // touch handles: bigger than mouse but body stays dominant
+          if (mx >= nx + nw - handleW) return { note: n, zone: 'resize' };
+          if (mx <= nx + handleW && nw > handleW * 2) return { note: n, zone: 'trim-start' };
+          return { note: n, zone: 'body' };
+        }
+      }
+      return null;
+    };
+
+    const onTouchStart = (e: TouchEvent) => {
+      if (e.touches.length !== 1) return;
+      e.preventDefault();
+      const touch = e.touches[0];
+      const rect = el.getBoundingClientRect();
+      const mx = touch.clientX - rect.left;
+      const my = touch.clientY - rect.top;
+      const vp = useUiStore.getState().viewport;
+      const clip = useProjectStore.getState().project.tracks
+        .flatMap((t) => t.clips).find((c) => c.id === useUiStore.getState().activeClipId);
+      const hit = clip ? touchHitTest(mx, my, sizeRef.current.height, vp, clip.notes) : null;
+
+      // Don't commit yet — wait for deadzone
+      touchState.current = {
+        phase: 'pending',
+        startX: touch.clientX, startY: touch.clientY,
+        hit,
+        mode: hit ? (hit.zone === 'body' ? 'move' : hit.zone) : 'scroll',
+      };
+    };
+
+    const activateDrag = (ts: NonNullable<typeof touchState.current>) => {
+      ts.phase = 'active';
+      if (ts.hit) {
+        // Select the note
+        const selIds = useUiStore.getState().selectedNoteIds;
+        if (!selIds.has(ts.hit.note.id)) {
+          useUiStore.getState().setSelectedNoteIds(new Set([ts.hit.note.id]));
+        }
+        useProjectStore.getState().beginDrag();
+        ts.noteId = ts.hit.note.id;
+        ts.noteStartTick = ts.hit.note.startTick;
+        if (ts.mode === 'move') {
+          const rect = el.getBoundingClientRect();
+          const mx = ts.startX - rect.left;
+          const my = ts.startY - rect.top;
+          const vp = useUiStore.getState().viewport;
+          ts.mouseTickOffset = pixelToTick(mx, vp.pixelsPerTick, vp.scrollX) - ts.hit.note.startTick;
+          ts.mousePitchOffset = yToPitch(my, vp.pixelsPerSemitone, vp.scrollY, sizeRef.current.height) - ts.hit.note.pitch;
+        }
+      }
+    };
+
+    const onTouchMove = (e: TouchEvent) => {
+      if (e.touches.length !== 1 || !touchState.current) return;
+      e.preventDefault();
+      const touch = e.touches[0];
+      const ts = touchState.current;
+
+      // Deadzone check
+      if (ts.phase === 'pending') {
+        const dist = Math.hypot(touch.clientX - ts.startX, touch.clientY - ts.startY);
+        if (dist < TOUCH_DEADZONE) return;
+        activateDrag(ts);
+      }
+
+      const rect = el.getBoundingClientRect();
+      const mx = touch.clientX - rect.left;
+      const my = touch.clientY - rect.top;
+      const vp = useUiStore.getState().viewport;
+
+      if (ts.mode === 'scroll') {
+        const dx = touch.clientX - ts.startX;
+        const dy = touch.clientY - ts.startY;
+        ts.startX = touch.clientX;
+        ts.startY = touch.clientY;
+        useUiStore.getState().setViewport({
+          scrollX: Math.max(0, vp.scrollX - dx / vp.pixelsPerTick),
+          scrollY: Math.max(0, Math.min(115, vp.scrollY + dy / vp.pixelsPerSemitone)),
+        });
+        return;
+      }
+
+      const clipId = useUiStore.getState().activeClipId;
+      const store = useProjectStore.getState();
+      const clip = clipId ? store.project.tracks.flatMap((t) => t.clips).find((c) => c.id === clipId) : null;
+      if (!clip || !clipId || !ts.noteId) return;
+      const selIds = useUiStore.getState().selectedNoteIds;
+      const ids = selIds.has(ts.noteId) ? Array.from(selIds) : [ts.noteId];
+      // Compute snap fresh from store (not from stale closure)
+      const uiState = useUiStore.getState();
+      const proj = useProjectStore.getState().project;
+      const tsig = proj.timeSignatureChanges[0] ?? { numerator: 4, denominator: 4 };
+      const tpm = proj.ticksPerBeat * (tsig.numerator ?? 4) * (4 / (tsig.denominator ?? 4));
+      const sn = uiState.snapDivision === 'smart'
+        ? getSmartSnapTicks(vp.pixelsPerTick, proj.ticksPerBeat, tsig.numerator ?? 4, tsig.denominator ?? 4)
+        : getSnapTicksFromDivision(uiState.snapDivision, proj.ticksPerBeat, tsig.numerator ?? 4, tsig.denominator ?? 4);
+
+      if (ts.mode === 'move' && ts.noteStartTick !== undefined && ts.mouseTickOffset !== undefined && ts.mousePitchOffset !== undefined) {
+        const curTick = pixelToTick(mx, vp.pixelsPerTick, vp.scrollX);
+        const curPitch = yToPitch(my, vp.pixelsPerSemitone, vp.scrollY, sizeRef.current.height);
+        const targetTick = Math.max(0, snapTick(curTick - ts.mouseTickOffset, sn, tpm));
+        const targetPitch = Math.round(curPitch - ts.mousePitchOffset);
+        const note = clip.notes.find((n) => n.id === ts.noteId);
+        if (note) {
+          const dt = targetTick - note.startTick;
+          const dp = Math.min(127, Math.max(0, targetPitch)) - note.pitch;
+          if (dt !== 0 || dp !== 0) store.moveNotes(clipId, ids, dt, dp);
+        }
+      } else if (ts.mode === 'resize' && ts.noteStartTick !== undefined) {
+        const curTick = pixelToTick(mx, vp.pixelsPerTick, vp.scrollX);
+        const newDur = Math.max(sn, Math.round((curTick - ts.noteStartTick) / sn) * sn);
+        const note = clip.notes.find((n) => n.id === ts.noteId);
+        if (note) {
+          const delta = newDur - note.duration;
+          if (delta !== 0) store.resizeNotes(clipId, ids, delta);
+        }
+      } else if (ts.mode === 'trim-start') {
+        const curTick = pixelToTick(mx, vp.pixelsPerTick, vp.scrollX);
+        const newStart = snapTick(curTick, sn, tpm);
+        const note = clip.notes.find((n) => n.id === ts.noteId);
+        if (note) {
+          const delta = newStart - note.startTick;
+          if (delta !== 0) store.trimNoteStart(clipId, ids, delta);
+        }
+      }
+    };
+
+    const onTouchEnd = () => {
+      const ts = touchState.current;
+      if (ts) {
+        if (ts.phase === 'pending' && ts.hit) {
+          // Tap without drag: just select the note
+          useUiStore.getState().setSelectedNoteIds(new Set([ts.hit.note.id]));
+        } else if (ts.phase === 'pending' && !ts.hit) {
+          // Tap empty: deselect
+          useUiStore.getState().clearSelection();
+        } else if (ts.phase === 'active' && ts.mode !== 'scroll') {
+          useProjectStore.getState().endDrag();
+        }
+      }
+      touchState.current = null;
+    };
+
+    el.addEventListener('touchstart', onTouchStart, { passive: false });
+    el.addEventListener('touchmove', onTouchMove, { passive: false });
+    el.addEventListener('touchend', onTouchEnd);
+    return () => {
+      el.removeEventListener('touchstart', onTouchStart);
+      el.removeEventListener('touchmove', onTouchMove);
+      el.removeEventListener('touchend', onTouchEnd);
+    };
+  }, []);
 
   const handleVelocityChange = useCallback(
     (noteId: string, velocity: number) => {
