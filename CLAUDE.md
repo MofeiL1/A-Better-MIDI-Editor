@@ -71,3 +71,8 @@ npm run build        # TypeScript 检查 + Vite 构建
 - `play()` 是 async（等待 Tone.start() + sampler 加载），必须在入口立即设置 `isPlayingRef.current = true` 并加 re-entry guard，否则快速按两次空格会因竞态条件启动两个播放实例
 - 调性分段的 transitionSharpness 默认值为 12（过低会产生假转调，过高会阻止真正的转调）
 - 短区域（< 2 小节）会被合并到相邻较长区域，合并后相邻同调区域会再次合并
+
+## 已知问题（待修复）
+
+- **ii-V 与 I 被分到不同调性区域**: 同一个 ii-V-I 进行在某些调上（手动移调后）会被检测为 ii-V 属于一个调、I 属于另一个调。这说明 HMM 的转换概率或 tonic 消歧对某些 PC-set group 之间的边界不够稳定，转调位置会因绝对音高变化而浮动。
+- **爵士乐中小调应合并为一类**: 目前 natural minor、harmonic minor、melodic minor 作为独立候选调参与检测（共 3 x 12 = 36 个小调候选）。但在爵士和声实践中，这三种小调是同一个调的不同形态（取决于旋律方向和和声语境），不应视为不同的调。应考虑将三种小调合并为一个 "minor" 类，PC-set group 中统一处理，减少同一小调内的无意义浮动。
