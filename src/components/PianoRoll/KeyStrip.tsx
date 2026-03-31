@@ -32,25 +32,6 @@ const KEY_COLORS: Record<number, { h: number; s: number; l: number }> = {
   5:  { h: 130, s: 55, l: 50 },  // F  - green
 };
 
-function keyColor(root: number, probability: number): string {
-  const c = KEY_COLORS[root] ?? { h: 210, s: 50, l: 50 };
-  // Probability affects opacity: high confidence = more vivid
-  const alpha = 0.15 + probability * 0.55; // range: 0.15 - 0.70
-  return `hsla(${c.h}, ${c.s}%, ${c.l}%, ${alpha})`;
-}
-
-function keyBorderColor(root: number, probability: number): string {
-  const c = KEY_COLORS[root] ?? { h: 210, s: 50, l: 50 };
-  const alpha = 0.3 + probability * 0.5;
-  return `hsla(${c.h}, ${c.s}%, ${c.l + 15}%, ${alpha})`;
-}
-
-function keyTextColor(root: number, probability: number): string {
-  const c = KEY_COLORS[root] ?? { h: 210, s: 50, l: 50 };
-  const alpha = 0.4 + probability * 0.5;
-  return `hsla(${c.h}, ${c.s - 10}%, ${c.l + 30}%, ${alpha})`;
-}
-
 /** Short mode abbreviation for display. */
 function modeShort(mode: string): string {
   switch (mode) {
@@ -63,6 +44,9 @@ function modeShort(mode: string): string {
     default: return mode.slice(0, 3);
   }
 }
+
+/** Low confidence threshold — below this, show "?" on the label. */
+const UNCERTAIN_THRESHOLD = 0.80;
 
 export const KeyStrip: React.FC<KeyStripProps> = ({
   width,
@@ -100,7 +84,6 @@ export const KeyStrip: React.FC<KeyStripProps> = ({
     ctx.stroke();
 
     if (isAtonal || regions.length === 0) {
-      // Show "atonal" or "no data" message
       ctx.font = `500 9px -apple-system, "SF Pro Text", "Helvetica Neue", sans-serif`;
       ctx.fillStyle = 'rgba(120, 120, 130, 0.6)';
       ctx.textBaseline = 'middle';
@@ -108,88 +91,130 @@ export const KeyStrip: React.FC<KeyStripProps> = ({
       return;
     }
 
+    // ─── Continuous rendering: no hard boundaries ───
+    // For each region, draw its solid fill for the "core" portion.
+    // Between regions, draw a gradient that blends from the previous
+    // region's color into the next region's color. The gradient spans
+    // the full gap between the core of one region and the core of the next.
+
+    const y = 1;
+    const h = height - 2;
+
+    for (let ri = 0; ri < regions.length; ri++) {
+      const region = regions[ri];
+      const prob = region.bestKeyProbability;
+      const root = region.bestKey.root;
+      const c = KEY_COLORS[root] ?? { h: 210, s: 50, l: 50 };
+      const isHovered = hoverRegionIdx === ri;
+
+      const regionStartX = (region.startTick - scrollX) * pixelsPerTick;
+      const regionEndX = (region.endTick - scrollX) * pixelsPerTick;
+
+      if (regionEndX < 0 || regionStartX > width) continue;
+
+      const baseAlpha = 0.25 + prob * 0.40; // 0.25 - 0.65
+      const alpha = isHovered ? Math.min(0.75, baseAlpha + 0.12) : baseAlpha;
+
+      // Determine how much of the region is "core" vs gradient edges.
+      // The gradient zone extends from this region's start/end into the boundary.
+      const prevRegion = ri > 0 ? regions[ri - 1] : null;
+      const nextRegion = ri < regions.length - 1 ? regions[ri + 1] : null;
+      const hasPrevTransition = prevRegion && (prevRegion.bestKey.root !== root || prevRegion.bestKey.mode !== region.bestKey.mode);
+      const hasNextTransition = nextRegion && (nextRegion.bestKey.root !== root || nextRegion.bestKey.mode !== region.bestKey.mode);
+
+      // Gradient zone width (in pixels): proportional to the shorter region
+      const GRAD_RATIO = 0.25; // gradient takes up to 25% of the shorter region
+      const MAX_GRAD_PX = 60;
+      const MIN_GRAD_PX = 12;
+
+      const regionW = regionEndX - regionStartX;
+
+      let leftGradPx = 0;
+      if (hasPrevTransition && prevRegion) {
+        const prevW = (prevRegion.endTick - prevRegion.startTick) * pixelsPerTick;
+        const shorter = Math.min(regionW, prevW);
+        leftGradPx = Math.max(MIN_GRAD_PX, Math.min(MAX_GRAD_PX, shorter * GRAD_RATIO));
+      }
+
+      let rightGradPx = 0;
+      if (hasNextTransition && nextRegion) {
+        const nextW = (nextRegion.endTick - nextRegion.startTick) * pixelsPerTick;
+        const shorter = Math.min(regionW, nextW);
+        rightGradPx = Math.max(MIN_GRAD_PX, Math.min(MAX_GRAD_PX, shorter * GRAD_RATIO));
+      }
+
+      // Core fill (solid color, between gradient zones)
+      const coreLeft = regionStartX + leftGradPx;
+      const coreRight = regionEndX - rightGradPx;
+      if (coreRight > coreLeft) {
+        ctx.fillStyle = `hsla(${c.h}, ${c.s}%, ${c.l}%, ${alpha})`;
+        ctx.fillRect(coreLeft, y, coreRight - coreLeft, h);
+      }
+
+      // Left gradient (previous region's color → this region's color)
+      if (leftGradPx > 0 && prevRegion) {
+        const pc = KEY_COLORS[prevRegion.bestKey.root] ?? { h: 210, s: 50, l: 50 };
+        const prevAlpha = 0.25 + prevRegion.bestKeyProbability * 0.40;
+        const grad = ctx.createLinearGradient(regionStartX, 0, regionStartX + leftGradPx, 0);
+        grad.addColorStop(0, `hsla(${pc.h}, ${pc.s}%, ${pc.l}%, ${prevAlpha})`);
+        grad.addColorStop(1, `hsla(${c.h}, ${c.s}%, ${c.l}%, ${alpha})`);
+        ctx.fillStyle = grad;
+        ctx.fillRect(regionStartX, y, leftGradPx, h);
+      } else if (leftGradPx === 0 && regionStartX > 0) {
+        // No transition: extend solid color to the edge
+        ctx.fillStyle = `hsla(${c.h}, ${c.s}%, ${c.l}%, ${alpha})`;
+        ctx.fillRect(regionStartX, y, Math.max(0, coreLeft - regionStartX), h);
+      }
+
+      // Right gradient (this region's color → next region's color)
+      if (rightGradPx > 0 && nextRegion) {
+        const nc = KEY_COLORS[nextRegion.bestKey.root] ?? { h: 210, s: 50, l: 50 };
+        const nextAlpha = 0.25 + nextRegion.bestKeyProbability * 0.40;
+        const gradStart = regionEndX - rightGradPx;
+        const grad = ctx.createLinearGradient(gradStart, 0, regionEndX, 0);
+        grad.addColorStop(0, `hsla(${c.h}, ${c.s}%, ${c.l}%, ${alpha})`);
+        grad.addColorStop(1, `hsla(${nc.h}, ${nc.s}%, ${nc.l}%, ${nextAlpha})`);
+        ctx.fillStyle = grad;
+        ctx.fillRect(gradStart, y, rightGradPx, h);
+      } else if (rightGradPx === 0) {
+        // No transition: extend solid color to the edge
+        ctx.fillStyle = `hsla(${c.h}, ${c.s}%, ${c.l}%, ${alpha})`;
+        ctx.fillRect(Math.max(regionStartX, coreRight), y, regionEndX - Math.max(regionStartX, coreRight), h);
+      }
+    }
+
+    // ─── Labels ───
+    // Draw labels on top of the filled background.
+    // Only show key name. No percentage unless confidence is low → show "?"
+    ctx.textBaseline = 'middle';
     for (let ri = 0; ri < regions.length; ri++) {
       const region = regions[ri];
       const x = (region.startTick - scrollX) * pixelsPerTick;
       const w = (region.endTick - region.startTick) * pixelsPerTick;
 
       if (x + w < 0 || x > width) continue;
-      if (w < 2) continue;
+      if (w < 20) continue;
 
       const prob = region.bestKeyProbability;
       const root = region.bestKey.root;
-      const isHovered = hoverRegionIdx === ri;
+      const c = KEY_COLORS[root] ?? { h: 210, s: 50, l: 50 };
 
-      // Region fill
-      const fillColor = keyColor(root, isHovered ? Math.min(1, prob + 0.15) : prob);
-      ctx.fillStyle = fillColor;
-      ctx.beginPath();
-      ctx.roundRect(x, 1, w, height - 2, 3);
-      ctx.fill();
+      const fontSize = Math.min(10, height - 4);
+      ctx.font = `600 ${fontSize}px -apple-system, "SF Pro Text", "Helvetica Neue", sans-serif`;
 
-      // Border for stable regions
-      if (region.type === 'stable') {
-        ctx.strokeStyle = keyBorderColor(root, prob);
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.roundRect(x, 1, w, height - 2, 3);
-        ctx.stroke();
-      } else {
-        // Transition: dashed border
-        ctx.strokeStyle = keyBorderColor(root, prob * 0.6);
-        ctx.lineWidth = 1;
-        ctx.setLineDash([3, 3]);
-        ctx.beginPath();
-        ctx.roundRect(x, 1, w, height - 2, 3);
-        ctx.stroke();
-        ctx.setLineDash([]);
+      const rootName = NOTE_NAMES[root];
+      const mode = modeShort(region.bestKey.mode);
+      let label = rootName + mode;
+
+      // Only show "?" for low-confidence regions
+      if (prob < UNCERTAIN_THRESHOLD) {
+        label += '?';
       }
 
-      // Key name label
-      if (w > 25) {
-        const fontSize = Math.min(10, height - 4);
-        ctx.font = `600 ${fontSize}px -apple-system, "SF Pro Text", "Helvetica Neue", sans-serif`;
-
-        const rootName = NOTE_NAMES[root];
-        const mode = modeShort(region.bestKey.mode);
-        let label = rootName + mode;
-
-        // Add probability if ambiguous or transitional
-        if (region.isAmbiguous && w > 60) {
-          label += ` ${Math.round(prob * 100)}%`;
-        }
-
-        // Add "?" suffix for ambiguous regions
-        if (region.isAmbiguous && w <= 60) {
-          label += '?';
-        }
-
-        ctx.fillStyle = keyTextColor(root, prob);
-        ctx.textBaseline = 'middle';
-        ctx.fillText(label, x + 4, height / 2, w - 8);
-      }
-    }
-
-    // Draw transition gradients between adjacent regions with different keys
-    for (let ri = 0; ri < regions.length - 1; ri++) {
-      const curr = regions[ri];
-      const next = regions[ri + 1];
-      if (curr.bestKey.root === next.bestKey.root && curr.bestKey.mode === next.bestKey.mode) continue;
-
-      const boundaryTick = curr.endTick;
-      const bx = (boundaryTick - scrollX) * pixelsPerTick;
-      if (bx < -10 || bx > width + 10) continue;
-
-      // Small gradient overlay at boundary
-      const gradW = 8;
-      const grad = ctx.createLinearGradient(bx - gradW / 2, 0, bx + gradW / 2, 0);
-      const c1 = KEY_COLORS[curr.bestKey.root] ?? { h: 210, s: 50, l: 50 };
-      const c2 = KEY_COLORS[next.bestKey.root] ?? { h: 210, s: 50, l: 50 };
-      grad.addColorStop(0, `hsla(${c1.h}, ${c1.s}%, ${c1.l}%, 0)`);
-      grad.addColorStop(0.5, `hsla(0, 0%, 20%, 0.6)`);
-      grad.addColorStop(1, `hsla(${c2.h}, ${c2.s}%, ${c2.l}%, 0)`);
-      ctx.fillStyle = grad;
-      ctx.fillRect(bx - gradW / 2, 1, gradW, height - 2);
+      // Text color: derived from key color, brighter
+      const textAlpha = 0.5 + prob * 0.4;
+      ctx.fillStyle = `hsla(${c.h}, ${c.s - 10}%, ${c.l + 30}%, ${textAlpha})`;
+      ctx.fillText(label, x + 5, height / 2, w - 10);
     }
 
     ctx.textBaseline = 'alphabetic';
@@ -223,22 +248,15 @@ export const KeyStrip: React.FC<KeyStripProps> = ({
   let tooltip = '';
   if (hoverRegionIdx !== null && regions[hoverRegionIdx]) {
     const r = regions[hoverRegionIdx];
-    const best = keyName(r.bestKey.root, r.bestKey.mode);
-    const pct = Math.round(r.bestKeyProbability * 100);
     const bars = r.startBar === r.endBar
       ? `Bar ${r.startBar + 1}`
       : `Bar ${r.startBar + 1}-${r.endBar + 1}`;
-    const typeTag = r.type === 'transition' ? ' (transition)' : '';
-    tooltip = `${best} ${pct}% | ${bars}${typeTag}`;
-
-    // Show top 3 alternatives
+    // Show top 3 candidates with probabilities
     const alts = r.keyProbabilities.slice(0, 3);
-    if (alts.length > 1) {
-      const altStrs = alts.map((k) =>
-        `${keyName(k.root, k.mode)} ${Math.round(k.probability * 100)}%`
-      );
-      tooltip = altStrs.join(' / ') + ` | ${bars}${typeTag}`;
-    }
+    const altStrs = alts.map((k) =>
+      `${keyName(k.root, k.mode)} ${Math.round(k.probability * 100)}%`
+    );
+    tooltip = altStrs.join('  |  ') + `  (${bars})`;
   }
 
   return (

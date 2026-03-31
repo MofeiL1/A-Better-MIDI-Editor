@@ -520,7 +520,7 @@ export function analyzeTonalSegments(
   options: TonalSegmentationOptions = {},
 ): TonalSegmentationResult {
   const sliceWidth = options.sliceWidth ?? ticksPerBeat * 4;
-  const transitionSharpness = options.transitionSharpness ?? 8;
+  const transitionSharpness = options.transitionSharpness ?? 12;
   const atonalThreshold = options.atonalThreshold ?? ATONAL_THRESHOLD;
   const ambiguityGap = options.ambiguityGap ?? AMBIGUITY_GAP;
 
@@ -696,9 +696,48 @@ function buildRegions(
   for (let i = 0; i < raw.length; i++) {
     const r = raw[i];
     if (r.end - r.start === 0) {
-      // Single-bar region: if its segment is a pivot, mark as transition
       if (segments[r.start].isPivot) {
         r.mixed = true;
+      }
+    }
+  }
+
+  // Merge short regions (< 2 bars) into their neighbors.
+  // A single-bar "key change" from a chromatic chord (e.g. secondary dominant)
+  // should not produce its own region — merge it with the adjacent region
+  // that has the most similar key (by PC set group).
+  const MIN_REGION_BARS = 2;
+  let merged = true;
+  while (merged) {
+    merged = false;
+    for (let i = 0; i < raw.length; i++) {
+      const r = raw[i];
+      const rLen = r.end - r.start + 1;
+      if (rLen >= MIN_REGION_BARS) continue;
+      if (raw.length <= 1) break;
+
+      // Merge with the neighbor that shares the most similar PC set
+      const prevR = i > 0 ? raw[i - 1] : null;
+      const nextR = i < raw.length - 1 ? raw[i + 1] : null;
+
+      let target: typeof prevR = null;
+      if (prevR && nextR) {
+        // Merge with the longer neighbor (prefer stability)
+        const prevLen = prevR.end - prevR.start + 1;
+        const nextLen = nextR.end - nextR.start + 1;
+        target = prevLen >= nextLen ? prevR : nextR;
+      } else {
+        target = prevR ?? nextR;
+      }
+
+      if (target) {
+        // Expand target to absorb this region
+        target.start = Math.min(target.start, r.start);
+        target.end = Math.max(target.end, r.end);
+        target.mixed = target.mixed || r.mixed;
+        raw.splice(i, 1);
+        merged = true;
+        break; // restart scan
       }
     }
   }
