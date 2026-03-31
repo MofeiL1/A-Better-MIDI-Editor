@@ -46,9 +46,34 @@ export type RankedKey = {
   candidateIdx: number;
 };
 
+/** A contiguous region with a consistent tonal center. */
+export type TonalRegion = {
+  startTick: number;
+  endTick: number;
+  startBar: number;  // 0-indexed bar number
+  endBar: number;    // inclusive
+  type: 'stable' | 'transition';
+  /**
+   * Bayesian posterior: P(key | all notes in this region).
+   * Top candidates with proper probabilities (sum ≈ 1 across all 72).
+   * Only the top entries are meaningful; tail is near-zero.
+   */
+  keyRanking: RankedKey[];
+  /** Shortcut: best key */
+  bestKey: { root: number; mode: string };
+  /** P(bestKey | region) — the headline probability users see (e.g. 0.42 = "42%") */
+  bestKeyProbability: number;
+  /** True if bestKey and #2 are close — suggest user confirmation */
+  isAmbiguous: boolean;
+  /** The per-bar segments that belong to this region */
+  segmentIndices: number[];
+};
+
 export type TonalSegmentationResult = {
   candidates: KeyCandidate[];
   segments: SegmentResult[];
+  /** Detected tonal regions with per-region Bayesian key probabilities */
+  regions: TonalRegion[];
   distanceMatrix: number[][];
   /** Top keys ranked by global confidence, best first */
   globalRanking: RankedKey[];
@@ -529,15 +554,175 @@ export function analyzeTonalSegments(
     globalRanking.length >= 2 &&
     globalRanking[0].confidence - globalRanking[1].confidence < ambiguityGap;
 
+  // Step 6: Build tonal regions with Bayesian key probabilities
+  const regions = buildRegions(segments, slices, sliceWidth);
+
   return {
     candidates: CANDIDATES,
     segments,
+    regions,
     distanceMatrix: DISTANCE_MATRIX,
     globalRanking,
     isLikelyAtonal,
     topConfidence,
     isAmbiguous,
   };
+}
+
+// ─── Step 6: Region building with Bayesian posteriors ────
+
+/**
+ * Identify contiguous regions from per-segment results, pool their notes,
+ * and compute proper Bayesian P(key | region_notes) for each region.
+ *
+ * A region is "stable" if all its segments agree on the same best key.
+ * A region is "transition" if it contains pivot chords or key changes.
+ *
+ * The key probability is computed by:
+ *   1. Pool all notes in the region
+ *   2. Compute weighted fit score per candidate (count × duration)
+ *   3. Apply per-region tonic signals (bass, V→I, position, major preference)
+ *   4. Sharpen with temperature scaling so probabilities are decisive
+ *   5. Normalize → proper posterior distribution over 72 candidates
+ */
+function buildRegions(
+  segments: SegmentResult[],
+  slices: TimeSlice[],
+  sliceWidth: number,
+): TonalRegion[] {
+  const T = segments.length;
+  if (T === 0) return [];
+
+  // Group consecutive segments with the same bestIdx into raw regions
+  type RawRegion = { start: number; end: number; mixed: boolean };
+  const raw: RawRegion[] = [];
+  let rStart = 0;
+
+  for (let t = 1; t <= T; t++) {
+    const changed = t === T || segments[t].bestIdx !== segments[t - 1].bestIdx;
+    if (changed) {
+      raw.push({ start: rStart, end: t - 1, mixed: false });
+      rStart = t;
+    }
+  }
+
+  // Mark single-segment regions between two different keys as "transition"
+  for (let i = 0; i < raw.length; i++) {
+    const r = raw[i];
+    if (r.end - r.start === 0) {
+      // Single-bar region: if its segment is a pivot, mark as transition
+      if (segments[r.start].isPivot) {
+        r.mixed = true;
+      }
+    }
+  }
+
+  // Build final regions with Bayesian posteriors
+  const TEMPERATURE = 4; // sharpening factor for probability distribution
+  const REGION_AMBIGUITY_THRESHOLD = 0.08; // #1 - #2 < 8% → ambiguous
+
+  const regions: TonalRegion[] = [];
+
+  for (const r of raw) {
+    // Pool all notes from slices in this region
+    const pooledNotes: SimpleNote[] = [];
+    for (let t = r.start; t <= r.end; t++) {
+      for (const n of slices[t].notes) {
+        pooledNotes.push(n);
+      }
+    }
+
+    // Compute fit scores for the pooled region
+    const regionSlice: TimeSlice = {
+      startTick: slices[r.start].startTick,
+      endTick: slices[r.end].endTick,
+      notes: pooledNotes,
+      bassPc: slices[r.start].bassPc, // doesn't matter, we recompute below
+    };
+    const rawScores = scoreSlice(regionSlice);
+
+    // Apply tonic signals for this region
+    const rLen = r.end - r.start + 1;
+    const bassCount = new Float64Array(12);
+    for (let t = r.start; t <= r.end; t++) bassCount[slices[t].bassPc]++;
+
+    const resCount = new Float64Array(NUM_CANDIDATES);
+    for (let t = r.start; t < r.end; t++) {
+      const curBass = slices[t].bassPc;
+      const nextBass = slices[t + 1].bassPc;
+      for (let i = 0; i < NUM_CANDIDATES; i++) {
+        if (curBass === CANDIDATE_DOMINANTS[i] && nextBass === CANDIDATE_ROOTS[i]) {
+          resCount[i]++;
+        }
+      }
+    }
+
+    // Build tonic-boosted scores
+    const boosted = new Float64Array(NUM_CANDIDATES);
+    for (let i = 0; i < NUM_CANDIDATES; i++) {
+      const root = CANDIDATE_ROOTS[i];
+      let m = 1;
+      const bassRatio = bassCount[root] / rLen;
+      m *= 1 + bassRatio * 1.5;
+      if (resCount[i] > 0) m *= 1 + resCount[i] * 0.8;
+      if (r.start === 0 && slices[0].bassPc === root) m *= 1.3;
+      if (r.end === T - 1 && slices[T - 1].bassPc === root) m *= 1.3;
+      if (MAJOR_FAMILY_MODES.has(CANDIDATES[i].mode)) m *= 1.1;
+      boosted[i] = rawScores[i] * m;
+    }
+
+    // Temperature scaling: raise to power then normalize
+    // This makes the distribution sharper — high scores get much higher,
+    // low scores get pushed toward zero.
+    const posterior = new Float64Array(NUM_CANDIDATES);
+    for (let i = 0; i < NUM_CANDIDATES; i++) {
+      posterior[i] = Math.pow(boosted[i], TEMPERATURE);
+    }
+    // Normalize
+    let pSum = 0;
+    for (let i = 0; i < NUM_CANDIDATES; i++) pSum += posterior[i];
+    if (pSum > 0) {
+      for (let i = 0; i < NUM_CANDIDATES; i++) posterior[i] /= pSum;
+    }
+
+    // Build ranked list
+    const ranking: RankedKey[] = [];
+    for (let i = 0; i < NUM_CANDIDATES; i++) {
+      if (posterior[i] > 0.001) { // skip negligible candidates
+        ranking.push({
+          root: CANDIDATES[i].root,
+          mode: CANDIDATES[i].mode,
+          confidence: posterior[i],
+          candidateIdx: i,
+        });
+      }
+    }
+    ranking.sort((a, b) => b.confidence - a.confidence);
+
+    const bestKey = ranking.length > 0
+      ? { root: ranking[0].root, mode: ranking[0].mode }
+      : { root: 0, mode: 'major' };
+    const bestProb = ranking.length > 0 ? ranking[0].confidence : 0;
+    const secondProb = ranking.length > 1 ? ranking[1].confidence : 0;
+
+    const segIndices: number[] = [];
+    for (let t = r.start; t <= r.end; t++) segIndices.push(t);
+
+    regions.push({
+      startTick: slices[r.start].startTick,
+      endTick: slices[r.end].endTick,
+      startBar: r.start,
+      endBar: r.end,
+      type: r.mixed ? 'transition' : 'stable',
+      keyRanking: ranking.slice(0, 10), // top 10 is plenty
+      bestKey,
+      bestKeyProbability: bestProb,
+      isAmbiguous: bestProb - secondProb < REGION_AMBIGUITY_THRESHOLD,
+      segmentIndices: segIndices,
+    });
+  }
+
+  return regions;
 }
 
 // ─── Utilities ───────────────────────────────────────────

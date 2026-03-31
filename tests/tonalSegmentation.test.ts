@@ -79,29 +79,24 @@ function printResults(label: string, result: TonalSegmentationResult) {
     console.log(`  ${barNum}  | ${cells.join(' | ')} | ${best.padEnd(20)} ${certBar} ${(seg.certainty * 100).toFixed(0).padStart(3)}%${pivotTag}`);
   }
 
-  // Regions
-  console.log('\n  Regions:');
-  let regionStart = 0;
-  let regionKey = candidateName(result.segments[0].bestIdx);
-  for (let i = 1; i <= result.segments.length; i++) {
-    const key =
-      i < result.segments.length ? candidateName(result.segments[i].bestIdx) : '';
-    if (key !== regionKey) {
-      console.log(`    Bar ${regionStart + 1}-${i}: ${regionKey}`);
-      regionStart = i;
-      regionKey = key;
+  // Tonal Regions with Bayesian probabilities
+  console.log('\n  Tonal Regions:');
+  for (const region of result.regions) {
+    const barRange = region.startBar === region.endBar
+      ? `Bar ${region.startBar + 1}`
+      : `Bar ${region.startBar + 1}-${region.endBar + 1}`;
+    const typeTag = region.type === 'transition' ? ' [transition]' : '';
+    const ambigTag = region.isAmbiguous ? ' [ambiguous]' : '';
+    console.log(`\n    ${barRange}${typeTag}${ambigTag}:`);
+    const top3 = region.keyRanking.slice(0, 3);
+    for (let i = 0; i < top3.length; i++) {
+      const k = top3[i];
+      const name = keyName(k.root, k.mode);
+      const pct = (k.confidence * 100).toFixed(1);
+      const bar = '\u2588'.repeat(Math.round(k.confidence * 20)) + '\u2591'.repeat(20 - Math.round(k.confidence * 20));
+      const marker = i === 0 ? ' <-- best' : '';
+      console.log(`      ${name.padEnd(20)} ${bar} ${pct.padStart(5)}%${marker}`);
     }
-  }
-
-  // Global ranking (top 5)
-  console.log('\n  Global ranking:');
-  const top5 = result.globalRanking.slice(0, 5);
-  for (let i = 0; i < top5.length; i++) {
-    const k = top5[i];
-    const name = keyName(k.root, k.mode);
-    const pct = (k.confidence * 100).toFixed(2);
-    const marker = i === 0 ? ' <--' : '';
-    console.log(`    #${i + 1}: ${name.padEnd(20)} ${pct}%${marker}`);
   }
 
   // Flags
