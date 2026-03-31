@@ -249,92 +249,118 @@ function normalize(arr: number[]): void {
   if (sum > 0) for (let i = 0; i < arr.length; i++) arr[i] /= sum;
 }
 
-// ─── Step 4: Global tonic disambiguation ─────────────────
+// ─── Step 4: Region-based tonic disambiguation ──────────
+
+/** Whether a mode belongs to the major family (tiebreaker: prefer major). */
+const MAJOR_FAMILY_MODES = new Set(['major', 'mixolydian', 'melodic minor']);
 
 /**
- * Compute a global tonic multiplier for each of the 72 candidates.
+ * After HMM smoothing, identify contiguous regions sharing the same
+ * winning pitch-class-set, then compute tonic signals per region.
  *
- * Signals:
- *   1. Bass frequency: how often each PC appears as bass across all slices
- *   2. V→I resolution: consecutive bass notes forming dominant→tonic
- *   3. Position: first/last slice bass note
+ * This avoids both problems:
+ *   - Global tonic (v3): modulation bleeds tonic signal across sections
+ *   - Per-bar tonic (v4): too noisy, each bar follows its own bass
  *
- * These multipliers redistribute probability WITHIN groups of candidates
- * that share the same pitch class set, so they don't fight the HMM smoothing.
+ * Within each region, signals used:
+ *   1. Bass note frequency (how often each PC is the lowest note)
+ *   2. V→I resolutions (consecutive bass = dominant → tonic)
+ *   3. Edge position (first/last bar of the whole piece)
+ *   4. Major preference (mild boost for major-family modes)
  */
-function computeTonicMultipliers(slices: TimeSlice[]): Float64Array {
+function applyRegionTonicDisambiguation(
+  posteriors: number[][],
+  slices: TimeSlice[],
+): void {
   const T = slices.length;
-  const multipliers = new Float64Array(NUM_CANDIDATES).fill(1);
-  if (T === 0) return multipliers;
+  if (T === 0) return;
 
-  // Signal 1: Bass note frequency
-  // Count how many slices have each PC as bass
-  const bassCount = new Float64Array(12);
-  for (const s of slices) bassCount[s.bassPc]++;
+  // Find the winning PC-set key at each segment (before tonic disambiguation)
+  function pcSetKeyOf(segIdx: number): string {
+    // Find the best candidate for this segment
+    let bestIdx = 0;
+    for (let i = 1; i < NUM_CANDIDATES; i++) {
+      if (posteriors[segIdx][i] > posteriors[segIdx][bestIdx]) bestIdx = i;
+    }
+    return [...CANDIDATE_PC_SETS[bestIdx]].sort((a, b) => a - b).join(',');
+  }
 
-  // Signal 2: V→I resolutions
-  // For each candidate, count how many times bass[t]=dominant, bass[t+1]=root
-  const resolutionCount = new Float64Array(NUM_CANDIDATES);
-  for (let t = 0; t < T - 1; t++) {
-    const curBass = slices[t].bassPc;
-    const nextBass = slices[t + 1].bassPc;
-    for (let i = 0; i < NUM_CANDIDATES; i++) {
-      if (curBass === CANDIDATE_DOMINANTS[i] && nextBass === CANDIDATE_ROOTS[i]) {
-        resolutionCount[i]++;
+  // Identify contiguous regions of the same PC set
+  type Region = { start: number; end: number; pcKey: string };
+  const regions: Region[] = [];
+  let regionStart = 0;
+  let regionPcKey = pcSetKeyOf(0);
+
+  for (let t = 1; t <= T; t++) {
+    const pcKey = t < T ? pcSetKeyOf(t) : '';
+    if (pcKey !== regionPcKey) {
+      regions.push({ start: regionStart, end: t - 1, pcKey: regionPcKey });
+      regionStart = t;
+      regionPcKey = pcKey;
+    }
+  }
+
+  // For each region, compute tonic multipliers and apply
+  for (const region of regions) {
+    const rLen = region.end - region.start + 1;
+
+    // Signal 1: Bass frequency in this region
+    const bassCount = new Float64Array(12);
+    for (let t = region.start; t <= region.end; t++) {
+      bassCount[slices[t].bassPc]++;
+    }
+
+    // Signal 2: V→I resolutions in this region
+    const resCount = new Float64Array(NUM_CANDIDATES);
+    for (let t = region.start; t < region.end; t++) {
+      const curBass = slices[t].bassPc;
+      const nextBass = slices[t + 1].bassPc;
+      for (let i = 0; i < NUM_CANDIDATES; i++) {
+        if (curBass === CANDIDATE_DOMINANTS[i] && nextBass === CANDIDATE_ROOTS[i]) {
+          resCount[i]++;
+        }
       }
     }
-  }
 
-  // Signal 3: First/last slice bass
-  const firstBass = slices[0].bassPc;
-  const lastBass = slices[T - 1].bassPc;
+    // Build multiplier for candidates in this region's PC-set group
+    const group = PC_SET_GROUPS.get(region.pcKey);
+    if (!group || group.length <= 1) continue; // no ambiguity to resolve
 
-  // Combine signals into multiplier per candidate
-  for (let i = 0; i < NUM_CANDIDATES; i++) {
-    const root = CANDIDATE_ROOTS[i];
-    let m = 1;
+    const mult = new Float64Array(NUM_CANDIDATES).fill(1);
+    for (const i of group) {
+      const root = CANDIDATE_ROOTS[i];
+      let m = 1;
 
-    // Bass frequency: how often does this candidate's root appear as bass?
-    // Normalized by total slices. Max bonus ≈ 2× for root that's bass in every slice.
-    const bassRatio = bassCount[root] / T;
-    m *= 1 + bassRatio * 1.5;
+      // Bass frequency
+      const bassRatio = bassCount[root] / rLen;
+      m *= 1 + bassRatio * 1.5;
 
-    // V→I: each resolution is a strong signal. Bonus scales with count.
-    if (resolutionCount[i] > 0) {
-      m *= 1 + resolutionCount[i] * 0.8;
+      // V→I resolutions
+      if (resCount[i] > 0) m *= 1 + resCount[i] * 0.8;
+
+      // Edge: first/last bar of entire piece
+      if (region.start === 0 && slices[0].bassPc === root) m *= 1.3;
+      if (region.end === T - 1 && slices[T - 1].bassPc === root) m *= 1.3;
+
+      // Major preference
+      if (MAJOR_FAMILY_MODES.has(CANDIDATES[i].mode)) m *= 1.1;
+
+      mult[i] = m;
     }
 
-    // Position: first/last bass matching root
-    if (firstBass === root) m *= 1.3;
-    if (lastBass === root) m *= 1.3;
-
-    multipliers[i] = m;
-  }
-
-  // Normalize multipliers WITHIN each PC-set group so that
-  // total probability within a group is preserved (only redistribution).
-  for (const group of PC_SET_GROUPS.values()) {
+    // Normalize within the group
     let groupSum = 0;
-    for (const idx of group) groupSum += multipliers[idx];
-    const avgM = groupSum / group.length;
-    if (avgM > 0) {
-      for (const idx of group) multipliers[idx] /= avgM;
+    for (const idx of group) groupSum += mult[idx];
+    const avg = groupSum / group.length;
+    if (avg > 0) {
+      for (const idx of group) mult[idx] /= avg;
     }
-  }
 
-  return multipliers;
-}
-
-/**
- * Apply tonic multipliers to posteriors and re-normalize.
- */
-function applyTonicMultipliers(
-  posteriors: number[][],
-  multipliers: Float64Array,
-): void {
-  for (const row of posteriors) {
-    for (let i = 0; i < NUM_CANDIDATES; i++) row[i] *= multipliers[i];
-    normalize(row);
+    // Apply to all segments in this region
+    for (let t = region.start; t <= region.end; t++) {
+      for (const idx of group) posteriors[t][idx] *= mult[idx];
+      normalize(posteriors[t]);
+    }
   }
 }
 
@@ -402,9 +428,8 @@ export function analyzeTonalSegments(
   // Step 3: Forward-backward smooth
   const posteriors = smooth(localScores, DISTANCE_MATRIX, transitionSharpness);
 
-  // Step 4: Global tonic disambiguation
-  const tonicMult = computeTonicMultipliers(slices);
-  applyTonicMultipliers(posteriors, tonicMult);
+  // Step 4: Region-based tonic disambiguation
+  applyRegionTonicDisambiguation(posteriors, slices);
 
   // Build segment results
   const segments: SegmentResult[] = slices.map((slice, t) => {
