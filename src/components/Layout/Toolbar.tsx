@@ -1,6 +1,5 @@
 import React from 'react';
 import { useUiStore } from '../../store/uiStore';
-import { SCALE_PATTERNS, NOTE_NAMES } from '../../utils/music';
 import type { ToolMode, SnapResolution } from '../../types/ui';
 
 const TOOLS: { mode: ToolMode; label: string; shortcut: string }[] = [
@@ -36,7 +35,7 @@ const selectStyle: React.CSSProperties = {
 // Discrete zoom levels — 0.125 (default) at exact center (index 4)
 const ZOOM_LEVELS = [0.03, 0.05, 0.07, 0.09, 0.125, 0.2, 0.4, 0.8, 2.0];
 export const Toolbar: React.FC = () => {
-  const { tool, setTool, snapDivision, setSnapDivision, scaleRoot, scaleMode, scaleAutoDetect, setScale, setAutoDetect } = useUiStore();
+  const { tool, setTool, snapDivision, setSnapDivision } = useUiStore();
   const viewport = useUiStore((s) => s.viewport);
   const setViewport = useUiStore((s) => s.setViewport);
 
@@ -102,70 +101,6 @@ export const Toolbar: React.FC = () => {
           <option key={o.value} value={o.value}>{o.label}</option>
         ))}
       </select>
-
-      {/* Divider */}
-      <div style={{ width: 1, height: 16, backgroundColor: '#444', margin: '0 6px' }} />
-
-      {/* Scale selector */}
-      <span style={{ color: '#777', fontSize: 10, fontWeight: 500 }}>Key</span>
-      <select
-        tabIndex={-1}
-        value={scaleAutoDetect ? -1 : scaleRoot}
-        onChange={(e) => {
-          const v = Number(e.target.value);
-          if (v === -1) {
-            setAutoDetect(true);
-          } else {
-            setAutoDetect(false);
-            setScale(v, scaleMode);
-          }
-        }}
-        style={selectStyle}
-      >
-        <option value={-1}>Auto{scaleAutoDetect ? ` (${NOTE_NAMES[scaleRoot]})` : ''}</option>
-        {NOTE_NAMES.map((name, i) => (
-          <option key={i} value={i}>{name}</option>
-        ))}
-      </select>
-      <select
-        tabIndex={-1}
-        value={scaleMode}
-        onChange={(e) => {
-          if (scaleAutoDetect) setAutoDetect(false);
-          setScale(scaleRoot, e.target.value);
-        }}
-        style={{
-          ...selectStyle,
-          ...(scaleAutoDetect ? { color: '#777', fontStyle: 'italic' } : {}),
-        }}
-        disabled={scaleAutoDetect}
-      >
-        {Object.keys(SCALE_PATTERNS).map((mode) => (
-          <option key={mode} value={mode}>{mode}</option>
-        ))}
-      </select>
-      {scaleAutoDetect && (
-        <button
-          tabIndex={-1}
-          onClick={() => setAutoDetect(false)}
-          title="Lock detected key"
-          style={{
-            padding: '2px 6px',
-            backgroundColor: '#3a6b3a',
-            color: '#cfc',
-            border: '1px solid #4a8a4a',
-            borderRadius: 3,
-            fontSize: 10,
-            fontWeight: 600,
-            fontFamily: 'inherit',
-            cursor: 'pointer',
-            outline: 'none',
-            marginLeft: 2,
-          }}
-        >
-          Confirm
-        </button>
-      )}
 
       {/* Spacer — push zoom slider to the right */}
       <div style={{ flex: 1 }} />

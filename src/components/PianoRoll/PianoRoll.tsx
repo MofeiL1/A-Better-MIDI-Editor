@@ -13,7 +13,6 @@ import { useUiStore } from '../../store/uiStore';
 import { usePreviewNote } from '../../hooks/usePreviewNote';
 import { pixelToTick, yToPitch, snapTick, getSnapTicksFromDivision, getSmartSnapTicks, tickToPixel, tickToSeconds } from '../../utils/timing';
 import { detectResolutions } from '../../utils/chordAnalysis';
-import { detectKey } from '../../utils/keyDetection';
 import { detectChordsFromNotes, buildOverlapChordToneMap, buildChordLabels, toChordInfoForKeyDetect } from '../../utils/chordDetection';
 import type { Note } from '../../types/model';
 
@@ -61,10 +60,9 @@ export const PianoRoll: React.FC = () => {
   const {
     tool, viewport, selectedNoteIds, snapDivision,
     activeClipId, playheadTick, isPlaying,
-    scaleRoot, scaleMode, scaleAutoDetect,
     lastDrawnDuration, useJazzSymbols,
     setViewport, setSelectedNoteIds, clearSelection,
-    setActiveClip, setActiveTrack, setPlayheadTick, setScale,
+    setActiveClip, setActiveTrack, setPlayheadTick,
     setLastDrawnDuration,
   } = useUiStore();
 
@@ -167,12 +165,6 @@ export const PianoRoll: React.FC = () => {
     [notes, project.ticksPerBeat],
   );
 
-  // Auto key detection
-  const detectedKey = useMemo(
-    () => detectKey(notes, chordsForKeyDetect),
-    [notes, chordsForKeyDetect],
-  );
-
   // Tonal segmentation: per-bar key regions with probabilities
   const tonalResult = useMemo(() => {
     if (notes.length === 0) return null;
@@ -184,17 +176,15 @@ export const PianoRoll: React.FC = () => {
     return analyzeTonalSegments(simpleNotes, project.ticksPerBeat);
   }, [notes, project.ticksPerBeat]);
 
-  // Drive scaleRoot/scaleMode when auto-detect is on
-  useEffect(() => {
-    if (scaleAutoDetect && detectedKey) {
-      setScale(detectedKey.root, detectedKey.mode);
-    }
-  }, [scaleAutoDetect, detectedKey, setScale]);
+  // Derive global key from tonal segmentation
+  const scaleRoot = tonalResult?.globalRanking[0]?.root ?? 0;
+  const scaleMode = tonalResult?.globalRanking[0]?.mode ?? 'major';
+  const tonalRegions = tonalResult?.regions ?? [];
 
-  // Chord labels (roman numerals for NoteLayer)
+  // Chord labels (roman numerals for NoteLayer) — uses per-region key
   const chordLabels = useMemo(
-    () => buildChordLabels(notes, project.ticksPerBeat, scaleRoot),
-    [notes, project.ticksPerBeat, scaleRoot],
+    () => buildChordLabels(notes, project.ticksPerBeat, scaleRoot, tonalRegions),
+    [notes, project.ticksPerBeat, scaleRoot, tonalRegions],
   );
 
   // Resolution detection (V→I, ii→V, tritone sub, etc.)

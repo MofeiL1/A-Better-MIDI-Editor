@@ -58,6 +58,7 @@ export const KeyStrip: React.FC<KeyStripProps> = ({
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [hoverRegionIdx, setHoverRegionIdx] = useState<number | null>(null);
+  const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(null);
 
   // Draw
   useEffect(() => {
@@ -92,11 +93,6 @@ export const KeyStrip: React.FC<KeyStripProps> = ({
     }
 
     // ─── Continuous rendering: no hard boundaries ───
-    // For each region, draw its solid fill for the "core" portion.
-    // Between regions, draw a gradient that blends from the previous
-    // region's color into the next region's color. The gradient spans
-    // the full gap between the core of one region and the core of the next.
-
     const y = 1;
     const h = height - 2;
 
@@ -112,18 +108,15 @@ export const KeyStrip: React.FC<KeyStripProps> = ({
 
       if (regionEndX < 0 || regionStartX > width) continue;
 
-      const baseAlpha = 0.25 + prob * 0.40; // 0.25 - 0.65
+      const baseAlpha = 0.25 + prob * 0.40;
       const alpha = isHovered ? Math.min(0.75, baseAlpha + 0.12) : baseAlpha;
 
-      // Determine how much of the region is "core" vs gradient edges.
-      // The gradient zone extends from this region's start/end into the boundary.
       const prevRegion = ri > 0 ? regions[ri - 1] : null;
       const nextRegion = ri < regions.length - 1 ? regions[ri + 1] : null;
       const hasPrevTransition = prevRegion && (prevRegion.bestKey.root !== root || prevRegion.bestKey.mode !== region.bestKey.mode);
       const hasNextTransition = nextRegion && (nextRegion.bestKey.root !== root || nextRegion.bestKey.mode !== region.bestKey.mode);
 
-      // Gradient zone width (in pixels): proportional to the shorter region
-      const GRAD_RATIO = 0.25; // gradient takes up to 25% of the shorter region
+      const GRAD_RATIO = 0.25;
       const MAX_GRAD_PX = 60;
       const MIN_GRAD_PX = 12;
 
@@ -143,7 +136,7 @@ export const KeyStrip: React.FC<KeyStripProps> = ({
         rightGradPx = Math.max(MIN_GRAD_PX, Math.min(MAX_GRAD_PX, shorter * GRAD_RATIO));
       }
 
-      // Core fill (solid color, between gradient zones)
+      // Core fill
       const coreLeft = regionStartX + leftGradPx;
       const coreRight = regionEndX - rightGradPx;
       if (coreRight > coreLeft) {
@@ -151,7 +144,7 @@ export const KeyStrip: React.FC<KeyStripProps> = ({
         ctx.fillRect(coreLeft, y, coreRight - coreLeft, h);
       }
 
-      // Left gradient (previous region's color → this region's color)
+      // Left gradient
       if (leftGradPx > 0 && prevRegion) {
         const pc = KEY_COLORS[prevRegion.bestKey.root] ?? { h: 210, s: 50, l: 50 };
         const prevAlpha = 0.25 + prevRegion.bestKeyProbability * 0.40;
@@ -161,12 +154,11 @@ export const KeyStrip: React.FC<KeyStripProps> = ({
         ctx.fillStyle = grad;
         ctx.fillRect(regionStartX, y, leftGradPx, h);
       } else if (leftGradPx === 0 && regionStartX > 0) {
-        // No transition: extend solid color to the edge
         ctx.fillStyle = `hsla(${c.h}, ${c.s}%, ${c.l}%, ${alpha})`;
         ctx.fillRect(regionStartX, y, Math.max(0, coreLeft - regionStartX), h);
       }
 
-      // Right gradient (this region's color → next region's color)
+      // Right gradient
       if (rightGradPx > 0 && nextRegion) {
         const nc = KEY_COLORS[nextRegion.bestKey.root] ?? { h: 210, s: 50, l: 50 };
         const nextAlpha = 0.25 + nextRegion.bestKeyProbability * 0.40;
@@ -177,15 +169,12 @@ export const KeyStrip: React.FC<KeyStripProps> = ({
         ctx.fillStyle = grad;
         ctx.fillRect(gradStart, y, rightGradPx, h);
       } else if (rightGradPx === 0) {
-        // No transition: extend solid color to the edge
         ctx.fillStyle = `hsla(${c.h}, ${c.s}%, ${c.l}%, ${alpha})`;
         ctx.fillRect(Math.max(regionStartX, coreRight), y, regionEndX - Math.max(regionStartX, coreRight), h);
       }
     }
 
     // ─── Labels ───
-    // Draw labels on top of the filled background.
-    // Only show key name. No percentage unless confidence is low → show "?"
     ctx.textBaseline = 'middle';
     for (let ri = 0; ri < regions.length; ri++) {
       const region = regions[ri];
@@ -206,12 +195,10 @@ export const KeyStrip: React.FC<KeyStripProps> = ({
       const mode = modeShort(region.bestKey.mode);
       let label = rootName + mode;
 
-      // Only show "?" for low-confidence regions
       if (prob < UNCERTAIN_THRESHOLD) {
         label += '?';
       }
 
-      // Text color: derived from key color, brighter
       const textAlpha = 0.5 + prob * 0.4;
       ctx.fillStyle = `hsla(${c.h}, ${c.s - 10}%, ${c.l + 30}%, ${textAlpha})`;
       ctx.fillText(label, x + 5, height / 2, w - 10);
@@ -220,7 +207,7 @@ export const KeyStrip: React.FC<KeyStripProps> = ({
     ctx.textBaseline = 'alphabetic';
   }, [width, height, scrollX, pixelsPerTick, regions, isAtonal, hoverRegionIdx]);
 
-  // Mouse move: hover detection
+  // Mouse move: hover detection + tooltip position
   const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -238,38 +225,125 @@ export const KeyStrip: React.FC<KeyStripProps> = ({
       }
     }
     setHoverRegionIdx(found);
+    if (found !== null) {
+      setTooltipPos({ x: e.clientX, y: rect.bottom });
+    } else {
+      setTooltipPos(null);
+    }
   };
 
   const handleMouseLeave = () => {
     setHoverRegionIdx(null);
+    setTooltipPos(null);
   };
 
-  // Build tooltip text for hovered region
-  let tooltip = '';
-  if (hoverRegionIdx !== null && regions[hoverRegionIdx]) {
-    const r = regions[hoverRegionIdx];
-    const bars = r.startBar === r.endBar
-      ? `Bar ${r.startBar + 1}`
-      : `Bar ${r.startBar + 1}-${r.endBar + 1}`;
-    // Show top 3 candidates with probabilities
-    const alts = r.keyProbabilities.slice(0, 3);
-    const altStrs = alts.map((k) =>
-      `${keyName(k.root, k.mode)} ${Math.round(k.probability * 100)}%`
-    );
-    tooltip = altStrs.join('  |  ') + `  (${bars})`;
-  }
+  // Build tooltip content for hovered region
+  const hoveredRegion = hoverRegionIdx !== null ? regions[hoverRegionIdx] : null;
 
   return (
-    <canvas
-      ref={canvasRef}
+    <div style={{ position: 'relative' }}>
+      <canvas
+        ref={canvasRef}
+        style={{
+          width,
+          height,
+          cursor: 'default',
+        }}
+        onMouseMove={handleMouseMove}
+        onMouseLeave={handleMouseLeave}
+      />
+      {hoveredRegion && tooltipPos && (
+        <KeyTooltip region={hoveredRegion} pos={tooltipPos} />
+      )}
+    </div>
+  );
+};
+
+/** Custom floating tooltip showing detailed key analysis. */
+const KeyTooltip: React.FC<{ region: TonalRegion; pos: { x: number; y: number } }> = ({
+  region,
+  pos,
+}) => {
+  const bars = region.startBar === region.endBar
+    ? `Bar ${region.startBar + 1}`
+    : `Bars ${region.startBar + 1}-${region.endBar + 1}`;
+
+  const top5 = region.keyProbabilities.slice(0, 5);
+
+  return (
+    <div
       style={{
-        width,
-        height,
-        cursor: 'default',
+        position: 'fixed',
+        left: pos.x,
+        top: pos.y + 4,
+        transform: 'translateX(-50%)',
+        backgroundColor: '#1e1e22',
+        border: '1px solid #3a3a40',
+        borderRadius: 6,
+        padding: '8px 12px',
+        zIndex: 9999,
+        pointerEvents: 'none',
+        minWidth: 180,
+        boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
+        fontFamily: '-apple-system, "SF Pro Text", "Helvetica Neue", sans-serif',
+        fontSize: 11,
+        color: '#ccc',
+        lineHeight: 1.5,
       }}
-      title={tooltip}
-      onMouseMove={handleMouseMove}
-      onMouseLeave={handleMouseLeave}
-    />
+    >
+      {/* Header */}
+      <div style={{ marginBottom: 6, borderBottom: '1px solid #333', paddingBottom: 4 }}>
+        <span style={{ color: '#fff', fontWeight: 600, fontSize: 12 }}>
+          {keyName(region.bestKey.root, region.bestKey.mode)}
+        </span>
+        <span style={{ color: '#888', marginLeft: 8 }}>{bars}</span>
+        {region.isAmbiguous && (
+          <span style={{ color: '#f59e0b', marginLeft: 6 }}>ambiguous</span>
+        )}
+      </div>
+
+      {/* Candidate table */}
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 10 }}>
+        <thead>
+          <tr style={{ color: '#777', textAlign: 'left' }}>
+            <th style={{ padding: '1px 4px 1px 0', fontWeight: 500 }}>Key</th>
+            <th style={{ padding: '1px 4px', fontWeight: 500, textAlign: 'right' }}>Fit</th>
+            <th style={{ padding: '1px 4px', fontWeight: 500, textAlign: 'right' }}>Tonic</th>
+            <th style={{ padding: '1px 0 1px 4px', fontWeight: 500, textAlign: 'right' }}>Score</th>
+          </tr>
+        </thead>
+        <tbody>
+          {top5.map((k, i) => {
+            const isBest = i === 0;
+            const c = KEY_COLORS[k.root] ?? { h: 210, s: 50, l: 50 };
+            return (
+              <tr key={`${k.root}-${k.mode}`} style={{ color: isBest ? '#fff' : '#aaa' }}>
+                <td style={{
+                  padding: '1px 4px 1px 0',
+                  fontWeight: isBest ? 600 : 400,
+                  color: isBest ? `hsl(${c.h}, ${c.s}%, ${c.l + 20}%)` : '#aaa',
+                }}>
+                  {keyName(k.root, k.mode)}
+                </td>
+                <td style={{ padding: '1px 4px', textAlign: 'right', fontFamily: 'monospace' }}>
+                  {Math.round(k.fitScore * 100)}%
+                </td>
+                <td style={{ padding: '1px 4px', textAlign: 'right', fontFamily: 'monospace' }}>
+                  {Math.round(k.tonicConfidence * 100)}%
+                </td>
+                <td style={{
+                  padding: '1px 0 1px 4px',
+                  textAlign: 'right',
+                  fontFamily: 'monospace',
+                  fontWeight: isBest ? 600 : 400,
+                }}>
+                  {Math.round(k.probability * 100)}%
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
   );
 };

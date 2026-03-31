@@ -385,6 +385,25 @@ function expandGroupPosteriors(
     new Array(NUM_CANDIDATES).fill(0),
   );
 
+  // ── Global tonic signals (computed once for the whole piece) ──
+  // In tonal music, the overall key persists unless there's strong local
+  // evidence of modulation. These global signals act as a prior that
+  // stabilizes tonic disambiguation against momentary local fluctuations
+  // (e.g. secondary dominants like A7→Dm being mistaken for V→I in D).
+  const globalBassCount = new Float64Array(12);
+  for (let t = 0; t < T; t++) globalBassCount[slices[t].bassPc]++;
+
+  const globalResCount = new Float64Array(NUM_CANDIDATES);
+  for (let t = 0; t < T - 1; t++) {
+    const curBass = slices[t].bassPc;
+    const nextBass = slices[t + 1].bassPc;
+    for (let i = 0; i < NUM_CANDIDATES; i++) {
+      if (curBass === CANDIDATE_DOMINANTS[i] && nextBass === CANDIDATE_ROOTS[i]) {
+        globalResCount[i]++;
+      }
+    }
+  }
+
   for (let t = 0; t < T; t++) {
     // Sliding window bounds
     const wStart = Math.max(0, t - windowRadius);
@@ -425,19 +444,32 @@ function expandGroupPosteriors(
         const root = CANDIDATE_ROOTS[idx];
         let m = 1;
 
-        // Bass frequency
+        // Local: Bass frequency in window
         const bassRatio = bassCount[root] / wLen;
         m *= 1 + bassRatio * 2.0;
 
-        // V→I resolutions
-        if (resCount[idx] > 0) m *= 1 + resCount[idx] * 1.0;
+        // Local: V→I resolutions in window (kept mild to avoid
+        // secondary dominants like A7→Dm being mistaken for real V→I)
+        if (resCount[idx] > 0) m *= 1 + resCount[idx] * 0.3;
 
-        // Edge position: first/last few bars of piece
-        if (t <= windowRadius && slices[0].bassPc === root) m *= 1.3;
-        if (t >= T - 1 - windowRadius && slices[T - 1].bassPc === root) m *= 1.3;
+        // Global: Bass frequency across entire piece (gentle stabilizing prior)
+        // Kept mild to avoid overriding real modulations (e.g. C→G)
+        const globalBassRatio = globalBassCount[root] / T;
+        m *= 1 + globalBassRatio * 0.8;
 
-        // Major preference
-        if (MAJOR_FAMILY_MODES.has(CANDIDATES[idx].mode)) m *= 1.1;
+        // Global: V→I resolutions across entire piece
+        if (globalResCount[idx] > 0) m *= 1 + globalResCount[idx] * 0.15;
+
+        // Home key bias: pieces almost always start in their home key.
+        // Apply a mild global boost for the first bar's bass note.
+        if (slices[0].bassPc === root) m *= 1.15;
+
+        // Edge position: stronger boost near start/end of piece
+        if (t <= windowRadius && slices[0].bassPc === root) m *= 1.2;
+        if (t >= T - 1 - windowRadius && slices[T - 1].bassPc === root) m *= 1.2;
+
+        // Major preference (major keys are more common than modal alternatives)
+        if (MAJOR_FAMILY_MODES.has(CANDIDATES[idx].mode)) m *= 1.2;
 
         mult[mi] = m;
       }
@@ -742,6 +774,31 @@ function buildRegions(
     }
   }
 
+  // After short-region merging, adjacent regions may now share the same
+  // dominant key (e.g. two C-major regions separated by a 1-bar chromatic
+  // chord that got merged into one side). Combine them.
+  // Determine dominant bestIdx for each region by majority vote.
+  const regionKey = (r: RawRegion): number => {
+    const counts = new Map<number, number>();
+    for (let t = r.start; t <= r.end; t++) {
+      const k = segments[t].bestIdx;
+      counts.set(k, (counts.get(k) ?? 0) + 1);
+    }
+    let best = segments[r.start].bestIdx;
+    let bestCount = 0;
+    for (const [k, c] of counts) {
+      if (c > bestCount) { best = k; bestCount = c; }
+    }
+    return best;
+  };
+  for (let i = raw.length - 1; i > 0; i--) {
+    if (regionKey(raw[i - 1]) === regionKey(raw[i])) {
+      raw[i - 1].end = raw[i].end;
+      raw[i - 1].mixed = raw[i - 1].mixed || raw[i].mixed;
+      raw.splice(i, 1);
+    }
+  }
+
   // Build final regions with binary key probabilities
   // Each key gets an independent P(region IS in this key) = fitScore × tonicConfidence
   // These do NOT sum to 100% — they are independent yes/no questions.
@@ -793,7 +850,7 @@ function buildRegions(
       if (resCount[i] > 0) m *= 1 + resCount[i] * 0.8;
       if (r.start === 0 && slices[0].bassPc === root) m *= 1.3;
       if (r.end === T - 1 && slices[T - 1].bassPc === root) m *= 1.3;
-      if (MAJOR_FAMILY_MODES.has(CANDIDATES[i].mode)) m *= 1.1;
+      if (MAJOR_FAMILY_MODES.has(CANDIDATES[i].mode)) m *= 1.2;
       tonicMult[i] = m;
     }
 

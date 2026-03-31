@@ -333,17 +333,28 @@ export function buildChordLabels(
   notes: Note[],
   ticksPerBeat: number,
   scaleRoot: number,
+  regions?: { startTick: number; endTick: number; bestKey: { root: number } }[],
 ): ChordLabel[] {
   const detected = detectChordsFromNotes(notes, ticksPerBeat);
   return detected.map((c) => {
     const rootName = PITCH_CLASS_NAMES[c.root];
     const bassStr = c.bass !== undefined ? '/' + PITCH_CLASS_NAMES[c.bass] : '';
     const name = rootName + c.quality + bassStr;
+    // Use per-region key if available, otherwise fall back to global scaleRoot
+    let localRoot = scaleRoot;
+    if (regions) {
+      for (const r of regions) {
+        if (c.startTick >= r.startTick && c.startTick < r.endTick) {
+          localRoot = r.bestKey.root;
+          break;
+        }
+      }
+    }
     const roman = chordToRomanNumeral(
       rootName,
       c.quality,
       c.bass !== undefined ? PITCH_CLASS_NAMES[c.bass] : null,
-      scaleRoot,
+      localRoot,
     );
     return { startTick: c.startTick, name, roman };
   });
