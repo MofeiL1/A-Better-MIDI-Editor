@@ -802,7 +802,7 @@ function buildRegions(
   // Build final regions with binary key probabilities
   // Each key gets an independent P(region IS in this key) = fitScore × tonicConfidence
   // These do NOT sum to 100% — they are independent yes/no questions.
-  const REGION_AMBIGUITY_GAP = 0.10; // best - #2 < 10% → ambiguous
+  const REGION_AMBIGUITY_GAP = 0.03; // best - #2 < 3% → ambiguous
 
   const regions: TonalRegion[] = [];
 
