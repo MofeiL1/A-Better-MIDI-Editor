@@ -155,7 +155,23 @@ for (let i = 0; i < NUM_CANDIDATES; i++) {
   else PC_SET_GROUPS.set(key, [i]);
 }
 
-// ─── Key distance matrix ─────────────────────────────────
+// ─── Collapsed PC-set groups for HMM ────────────────────
+// HMM operates on groups (not individual candidates) to avoid
+// random floating between modes sharing the same notes.
+
+const GROUP_KEYS: string[] = [...PC_SET_GROUPS.keys()];
+const NUM_GROUPS = GROUP_KEYS.length;
+const GROUP_MEMBERS: number[][] = GROUP_KEYS.map((k) => PC_SET_GROUPS.get(k)!);
+
+/** Map candidate index → group index */
+const CANDIDATE_TO_GROUP: number[] = new Array(NUM_CANDIDATES);
+for (let g = 0; g < NUM_GROUPS; g++) {
+  for (const idx of GROUP_MEMBERS[g]) {
+    CANDIDATE_TO_GROUP[idx] = g;
+  }
+}
+
+// ─── Key distance matrix (both candidate-level and group-level) ──
 
 function buildDistanceMatrix(): number[][] {
   const n = NUM_CANDIDATES;
@@ -176,6 +192,19 @@ function buildDistanceMatrix(): number[][] {
 }
 
 export const DISTANCE_MATRIX = buildDistanceMatrix();
+
+/** Distance matrix between PC-set groups (used by grouped HMM). */
+const GROUP_DIST: number[][] = Array.from({ length: NUM_GROUPS }, () =>
+  new Array(NUM_GROUPS).fill(0),
+);
+for (let i = 0; i < NUM_GROUPS; i++) {
+  const repI = GROUP_MEMBERS[i][0]; // any member — all have same PC set
+  for (let j = i + 1; j < NUM_GROUPS; j++) {
+    const repJ = GROUP_MEMBERS[j][0];
+    GROUP_DIST[i][j] = DISTANCE_MATRIX[repI][repJ];
+    GROUP_DIST[j][i] = GROUP_DIST[i][j];
+  }
+}
 
 // ─── Step 1: Slice ───────────────────────────────────────
 
@@ -243,15 +272,33 @@ function scoreSlice(slice: TimeSlice): number[] {
   return scores;
 }
 
-// ─── Step 3: Forward-backward smoothing ──────────────────
+// ─── Step 2b: Group-level scoring ───────────────────────
 
+/** Score a slice at the PC-set group level. All members of a group share
+ *  the same fit score, so we just take one representative per group. */
+function scoreSliceGrouped(slice: TimeSlice): number[] {
+  const candidateScores = scoreSlice(slice);
+  const groupScores = new Array(NUM_GROUPS);
+  for (let g = 0; g < NUM_GROUPS; g++) {
+    groupScores[g] = candidateScores[GROUP_MEMBERS[g][0]];
+  }
+  return groupScores;
+}
+
+// ─── Step 3: Forward-backward smoothing (group-level) ───
+
+/**
+ * Generic forward-backward HMM smoother.
+ * Works on any state count — pass group-level or candidate-level data.
+ */
 function smooth(
   localScores: number[][],
   distMatrix: number[][],
+  numStates: number,
   transitionSharpness: number,
 ): number[][] {
   const T = localScores.length;
-  const K = NUM_CANDIDATES;
+  const K = numStates;
   if (T === 0) return [];
 
   const trans: number[][] = Array.from({ length: K }, (_, i) =>
@@ -305,72 +352,54 @@ function normalize(arr: number[]): void {
   if (sum > 0) for (let i = 0; i < arr.length; i++) arr[i] /= sum;
 }
 
-// ─── Step 4: Region-based tonic disambiguation ──────────
+// ─── Step 4: Sliding-window tonic disambiguation ────────
 
 /** Whether a mode belongs to the major family (tiebreaker: prefer major). */
 const MAJOR_FAMILY_MODES = new Set(['major', 'mixolydian', 'melodic minor']);
 
+/** Default window radius for tonic signals (in bars). */
+const TONIC_WINDOW_RADIUS = 3;
+
 /**
- * After HMM smoothing, identify contiguous regions sharing the same
- * winning pitch-class-set, then compute tonic signals per region.
+ * Expand group-level HMM posteriors to 72-candidate posteriors using
+ * sliding-window tonic signals.
  *
- * This avoids both problems:
- *   - Global tonic (v3): modulation bleeds tonic signal across sections
- *   - Per-bar tonic (v4): too noisy, each bar follows its own bass
- *
- * Within each region, signals used:
+ * For each segment, look at a local window of bars to compute:
  *   1. Bass note frequency (how often each PC is the lowest note)
  *   2. V→I resolutions (consecutive bass = dominant → tonic)
- *   3. Edge position (first/last bar of the whole piece)
+ *   3. Edge position (first/last region of the piece)
  *   4. Major preference (mild boost for major-family modes)
+ *
+ * Then distribute each group's posterior among its members proportionally.
+ *
+ * This avoids the chicken-and-egg problem: tonic signals don't depend on
+ * region boundaries, so they can't be corrupted by incorrect HMM groupings.
  */
-function applyRegionTonicDisambiguation(
-  posteriors: number[][],
+function expandGroupPosteriors(
+  groupPosteriors: number[][],
   slices: TimeSlice[],
-): void {
+  windowRadius: number = TONIC_WINDOW_RADIUS,
+): number[][] {
   const T = slices.length;
-  if (T === 0) return;
+  const result: number[][] = Array.from({ length: T }, () =>
+    new Array(NUM_CANDIDATES).fill(0),
+  );
 
-  // Find the winning PC-set key at each segment (before tonic disambiguation)
-  function pcSetKeyOf(segIdx: number): string {
-    // Find the best candidate for this segment
-    let bestIdx = 0;
-    for (let i = 1; i < NUM_CANDIDATES; i++) {
-      if (posteriors[segIdx][i] > posteriors[segIdx][bestIdx]) bestIdx = i;
-    }
-    return [...CANDIDATE_PC_SETS[bestIdx]].sort((a, b) => a - b).join(',');
-  }
+  for (let t = 0; t < T; t++) {
+    // Sliding window bounds
+    const wStart = Math.max(0, t - windowRadius);
+    const wEnd = Math.min(T - 1, t + windowRadius);
+    const wLen = wEnd - wStart + 1;
 
-  // Identify contiguous regions of the same PC set
-  type Region = { start: number; end: number; pcKey: string };
-  const regions: Region[] = [];
-  let regionStart = 0;
-  let regionPcKey = pcSetKeyOf(0);
-
-  for (let t = 1; t <= T; t++) {
-    const pcKey = t < T ? pcSetKeyOf(t) : '';
-    if (pcKey !== regionPcKey) {
-      regions.push({ start: regionStart, end: t - 1, pcKey: regionPcKey });
-      regionStart = t;
-      regionPcKey = pcKey;
-    }
-  }
-
-  // For each region, compute tonic multipliers and apply
-  for (const region of regions) {
-    const rLen = region.end - region.start + 1;
-
-    // Signal 1: Bass frequency in this region
+    // Signal 1: Bass note frequency in window
     const bassCount = new Float64Array(12);
-    for (let t = region.start; t <= region.end; t++) {
-      bassCount[slices[t].bassPc]++;
-    }
+    for (let w = wStart; w <= wEnd; w++) bassCount[slices[w].bassPc]++;
 
-    // Signal 2: V→I resolutions in this region
+    // Signal 2: V→I resolutions in window
     const resCount = new Float64Array(NUM_CANDIDATES);
-    for (let t = region.start; t < region.end; t++) {
-      const curBass = slices[t].bassPc;
-      const nextBass = slices[t + 1].bassPc;
+    for (let w = wStart; w < wEnd; w++) {
+      const curBass = slices[w].bassPc;
+      const nextBass = slices[w + 1].bassPc;
       for (let i = 0; i < NUM_CANDIDATES; i++) {
         if (curBass === CANDIDATE_DOMINANTS[i] && nextBass === CANDIDATE_ROOTS[i]) {
           resCount[i]++;
@@ -378,66 +407,98 @@ function applyRegionTonicDisambiguation(
       }
     }
 
-    // Build multiplier for candidates in this region's PC-set group
-    const group = PC_SET_GROUPS.get(region.pcKey);
-    if (!group || group.length <= 1) continue; // no ambiguity to resolve
+    // Distribute each group's posterior to its members
+    for (let g = 0; g < NUM_GROUPS; g++) {
+      const groupProb = groupPosteriors[t][g];
+      if (groupProb < 1e-10) continue;
 
-    const mult = new Float64Array(NUM_CANDIDATES).fill(1);
-    for (const i of group) {
-      const root = CANDIDATE_ROOTS[i];
-      let m = 1;
+      const members = GROUP_MEMBERS[g];
+      if (members.length === 1) {
+        result[t][members[0]] = groupProb;
+        continue;
+      }
 
-      // Bass frequency
-      const bassRatio = bassCount[root] / rLen;
-      m *= 1 + bassRatio * 1.5;
+      // Compute tonic multipliers for each member
+      const mult = new Float64Array(members.length);
+      for (let mi = 0; mi < members.length; mi++) {
+        const idx = members[mi];
+        const root = CANDIDATE_ROOTS[idx];
+        let m = 1;
 
-      // V→I resolutions
-      if (resCount[i] > 0) m *= 1 + resCount[i] * 0.8;
+        // Bass frequency
+        const bassRatio = bassCount[root] / wLen;
+        m *= 1 + bassRatio * 2.0;
 
-      // Edge: first/last bar of entire piece
-      if (region.start === 0 && slices[0].bassPc === root) m *= 1.3;
-      if (region.end === T - 1 && slices[T - 1].bassPc === root) m *= 1.3;
+        // V→I resolutions
+        if (resCount[idx] > 0) m *= 1 + resCount[idx] * 1.0;
 
-      // Major preference
-      if (MAJOR_FAMILY_MODES.has(CANDIDATES[i].mode)) m *= 1.1;
+        // Edge position: first/last few bars of piece
+        if (t <= windowRadius && slices[0].bassPc === root) m *= 1.3;
+        if (t >= T - 1 - windowRadius && slices[T - 1].bassPc === root) m *= 1.3;
 
-      mult[i] = m;
-    }
+        // Major preference
+        if (MAJOR_FAMILY_MODES.has(CANDIDATES[idx].mode)) m *= 1.1;
 
-    // Normalize within the group
-    let groupSum = 0;
-    for (const idx of group) groupSum += mult[idx];
-    const avg = groupSum / group.length;
-    if (avg > 0) {
-      for (const idx of group) mult[idx] /= avg;
-    }
+        mult[mi] = m;
+      }
 
-    // Apply to all segments in this region
-    for (let t = region.start; t <= region.end; t++) {
-      for (const idx of group) posteriors[t][idx] *= mult[idx];
-      normalize(posteriors[t]);
+      // Normalize and distribute
+      let mSum = 0;
+      for (let mi = 0; mi < members.length; mi++) mSum += mult[mi];
+      if (mSum > 0) {
+        for (let mi = 0; mi < members.length; mi++) {
+          result[t][members[mi]] = groupProb * (mult[mi] / mSum);
+        }
+      }
     }
   }
+
+  return result;
 }
 
-// ─── Step 5: Global ranking ──────────────────────────────
+// ─── Step 5: Global ranking (group-aware) ───────────────
 
-function computeGlobalRanking(segments: SegmentResult[]): RankedKey[] {
-  if (segments.length === 0) return [];
+/**
+ * Compute global ranking using group-level posteriors.
+ *
+ * For each group, we rank by average group posterior (avoids dilution
+ * from group size). Within each group, we pick the best candidate
+ * based on average expanded posteriors (tonic signals).
+ */
+function computeGlobalRanking(
+  groupPosteriors: number[][],
+  expandedPosteriors: number[][],
+): RankedKey[] {
+  const T = groupPosteriors.length;
+  if (T === 0) return [];
 
-  const avgProb = new Float64Array(NUM_CANDIDATES);
-  for (const seg of segments) {
-    for (let i = 0; i < NUM_CANDIDATES; i++) avgProb[i] += seg.probs[i];
+  // Average group posteriors across all segments
+  const avgGroupProb = new Float64Array(NUM_GROUPS);
+  for (let t = 0; t < T; t++) {
+    for (let g = 0; g < NUM_GROUPS; g++) avgGroupProb[g] += groupPosteriors[t][g];
   }
-  for (let i = 0; i < NUM_CANDIDATES; i++) avgProb[i] /= segments.length;
+  for (let g = 0; g < NUM_GROUPS; g++) avgGroupProb[g] /= T;
 
+  // Average expanded posteriors for within-group candidate ranking
+  const avgCandProb = new Float64Array(NUM_CANDIDATES);
+  for (let t = 0; t < T; t++) {
+    for (let i = 0; i < NUM_CANDIDATES; i++) avgCandProb[i] += expandedPosteriors[t][i];
+  }
+  for (let i = 0; i < NUM_CANDIDATES; i++) avgCandProb[i] /= T;
+
+  // For each group, pick the best candidate and assign group-level confidence
   const ranked: RankedKey[] = [];
-  for (let i = 0; i < NUM_CANDIDATES; i++) {
+  for (let g = 0; g < NUM_GROUPS; g++) {
+    const members = GROUP_MEMBERS[g];
+    let bestMember = members[0];
+    for (let mi = 1; mi < members.length; mi++) {
+      if (avgCandProb[members[mi]] > avgCandProb[bestMember]) bestMember = members[mi];
+    }
     ranked.push({
-      root: CANDIDATES[i].root,
-      mode: CANDIDATES[i].mode,
-      confidence: avgProb[i],
-      candidateIdx: i,
+      root: CANDIDATES[bestMember].root,
+      mode: CANDIDATES[bestMember].mode,
+      confidence: avgGroupProb[g],
+      candidateIdx: bestMember,
     });
   }
   ranked.sort((a, b) => b.confidence - a.confidence);
@@ -479,14 +540,14 @@ export function analyzeTonalSegments(
     };
   }
 
-  // Step 2: Local scoring (pitch class fit only)
-  const localScores = slices.map((s) => scoreSlice(s));
+  // Step 2: Local scoring at PC-set group level
+  const groupLocalScores = slices.map((s) => scoreSliceGrouped(s));
 
-  // Step 3: Forward-backward smooth
-  const posteriors = smooth(localScores, DISTANCE_MATRIX, transitionSharpness);
+  // Step 3: Forward-backward smooth on groups (not 72 candidates)
+  const groupPosteriors = smooth(groupLocalScores, GROUP_DIST, NUM_GROUPS, transitionSharpness);
 
-  // Step 4: Region-based tonic disambiguation
-  applyRegionTonicDisambiguation(posteriors, slices);
+  // Step 4: Expand group posteriors → 72 candidates via sliding-window tonic
+  const posteriors = expandGroupPosteriors(groupPosteriors, slices);
 
   // Build segment results with certainty scores
   // Compute local fit scores for certainty display
@@ -494,15 +555,21 @@ export function analyzeTonalSegments(
 
   const segments: SegmentResult[] = slices.map((slice, t) => {
     const probs = posteriors[t];
-    let bestIdx = 0;
-    for (let i = 1; i < probs.length; i++) {
-      if (probs[i] > probs[bestIdx]) bestIdx = i;
+
+    // Determine bestIdx: first find the best GROUP (avoids dilution from
+    // group size — a 4-member group shouldn't lose to a 1-member group
+    // that has lower group posterior). Then pick the best candidate
+    // WITHIN that group via tonic signals (already encoded in probs).
+    let bestGroup = 0;
+    for (let g = 1; g < NUM_GROUPS; g++) {
+      if (groupPosteriors[t][g] > groupPosteriors[t][bestGroup]) bestGroup = g;
+    }
+    const members = GROUP_MEMBERS[bestGroup];
+    let bestIdx = members[0];
+    for (let mi = 1; mi < members.length; mi++) {
+      if (probs[members[mi]] > probs[bestIdx]) bestIdx = members[mi];
     }
 
-    // Certainty = what % of this segment's notes (weighted by count×duration)
-    // fall within the detected key's scale. This is the direct musical answer
-    // to "how well does this key fit the notes here?"
-    // 95% = almost all notes in-scale, 60% = lots of out-of-scale notes.
     const certainty = fitScores[t][bestIdx];
 
     return {
@@ -555,16 +622,18 @@ export function analyzeTonalSegments(
     }
   }
 
-  // Step 5: Global ranking + flags
-  const globalRanking = computeGlobalRanking(segments);
+  // Step 5: Global ranking + flags (using group-level posteriors)
+  const globalRanking = computeGlobalRanking(groupPosteriors, posteriors);
   const topConfidence = globalRanking.length > 0 ? globalRanking[0].confidence : 0;
 
-  // Atonal check: use median of per-segment best confidence.
-  // A modulating piece (C→F#) has high per-segment confidence even though
-  // the global average is low. Only flag atonal if most segments are uncertain.
-  const segBestConfs = segments.map((s) => s.probs[s.bestIdx]).sort((a, b) => a - b);
-  const medianConf = segBestConfs.length > 0
-    ? segBestConfs[Math.floor(segBestConfs.length / 2)]
+  // Atonal check: use median of per-segment best GROUP confidence.
+  // Group posteriors are not diluted by group size, so they give a true
+  // picture of how confident the HMM is about the PC set at each bar.
+  const segBestGroupConfs = groupPosteriors
+    .map((gp) => Math.max(...gp))
+    .sort((a, b) => a - b);
+  const medianConf = segBestGroupConfs.length > 0
+    ? segBestGroupConfs[Math.floor(segBestGroupConfs.length / 2)]
     : 0;
   const isLikelyAtonal = medianConf < atonalThreshold;
 
@@ -681,7 +750,7 @@ function buildRegions(
       const root = CANDIDATE_ROOTS[i];
       let m = 1;
       const bassRatio = bassCount[root] / rLen;
-      m *= 1 + bassRatio * 1.5;
+      m *= 1 + bassRatio * 2.0;
       if (resCount[i] > 0) m *= 1 + resCount[i] * 0.8;
       if (r.start === 0 && slices[0].bassPc === root) m *= 1.3;
       if (r.end === T - 1 && slices[T - 1].bassPc === root) m *= 1.3;
