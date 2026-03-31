@@ -58,15 +58,16 @@ export function detectKey(
   notes: Note[],
   chords: ChordInfo[],
 ): { root: number; mode: string } | null {
-  // Collect unique pitch classes
-  const pcSet = new Set<number>();
+  // Collect pitch class weights: count × duration
+  const pcWeight = new Map<number, number>();
+  let totalWeight = 0;
   for (const n of notes) {
-    pcSet.add(((n.pitch % 12) + 12) % 12);
+    const pc = ((n.pitch % 12) + 12) % 12;
+    const w = n.duration;
+    pcWeight.set(pc, (pcWeight.get(pc) ?? 0) + w);
+    totalWeight += w;
   }
-  if (pcSet.size < 3) return null;
-
-  const uniquePCs = [...pcSet];
-  const totalPCs = uniquePCs.length;
+  if (pcWeight.size < 3 || totalWeight === 0) return null;
 
   type Candidate = {
     root: number;
@@ -84,15 +85,15 @@ export function detectKey(
       const pattern = SCALE_PATTERNS[mode];
       if (!pattern) continue;
 
-      // Count how many of the music's pitch classes are in this scale
+      // Sum weights of pitch classes that fall within this scale
       const scaleSet = new Set(pattern.map((interval) => (root + interval) % 12));
-      let inScale = 0;
-      for (const pc of uniquePCs) {
-        if (scaleSet.has(pc)) inScale++;
+      let inScaleWeight = 0;
+      for (const [pc, w] of pcWeight) {
+        if (scaleSet.has(pc)) inScaleWeight += w;
       }
-      const fitScore = inScale / totalPCs;
+      const fitScore = inScaleWeight / totalWeight;
 
-      // Threshold: at least 70% of notes must be in-scale
+      // Threshold: at least 70% of weighted notes must be in-scale
       if (fitScore < 0.7) continue;
 
       // Check for tonic chord

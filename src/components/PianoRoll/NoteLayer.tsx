@@ -2,6 +2,7 @@ import React, { useRef, useEffect } from 'react';
 import type { Note } from '../../types/model';
 import type { ResolutionInfo } from '../../utils/chordAnalysis';
 import type { ChordLabel } from '../../utils/chordDetection';
+import type { TonalRegion } from '../../utils/tonalSegmentation';
 import { applyJazzSymbols } from '../../utils/chordFormat';
 import { pitchClass, getScaleDegreeName } from '../../utils/music';
 import { useUiStore } from '../../store/uiStore';
@@ -19,10 +20,12 @@ interface NoteLayerProps {
   chordToneMap?: Map<string, string>;
   /** Chord labels (roman numerals) positioned at each chord's startTick */
   chordLabels?: ChordLabel[];
-  /** Scale root (0-11) for scale degree display */
+  /** Scale root (0-11) for scale degree display (global fallback) */
   scaleRoot?: number;
-  /** Scale mode for scale degree display */
+  /** Scale mode for scale degree display (global fallback) */
   scaleMode?: string;
+  /** Tonal regions for per-note key lookup and degree visibility */
+  tonalRegions?: TonalRegion[];
   /** Resolution relationships between consecutive chords */
   resolutions?: ResolutionInfo[];
   /** Ticks per measure, needed for resolution label positioning */
@@ -72,6 +75,7 @@ export const NoteLayer: React.FC<NoteLayerProps> = ({
   chordLabels,
   scaleRoot,
   scaleMode,
+  tonalRegions,
   resolutions,
   ticksPerMeasure,
   useJazzSymbols,
@@ -208,8 +212,25 @@ export const NoteLayer: React.FC<NoteLayerProps> = ({
         ctx.font = `500 ${Math.min(10, noteH - 3)}px -apple-system, "SF Pro Text", "Helvetica Neue", sans-serif`;
         const name = NOTE_NAMES[pitchClass(note.pitch)];
         const toneLabel = chordToneMap?.get(note.id);
-        const degreeStr = (scaleRoot != null)
-          ? getScaleDegreeName(note.pitch, scaleRoot, toneLabel ?? undefined)
+
+        // Look up the tonal region this note belongs to
+        let noteScaleRoot = scaleRoot;
+        let regionIsStable = true;
+        if (tonalRegions && tonalRegions.length > 0) {
+          let found = false;
+          for (const r of tonalRegions) {
+            if (note.startTick >= r.startTick && note.startTick < r.endTick) {
+              noteScaleRoot = r.bestKey.root;
+              regionIsStable = r.type === 'stable' && !r.isAmbiguous;
+              found = true;
+              break;
+            }
+          }
+          if (!found) regionIsStable = false;
+        }
+
+        const degreeStr = (noteScaleRoot != null && regionIsStable)
+          ? getScaleDegreeName(note.pitch, noteScaleRoot, toneLabel ?? undefined)
           : '';
         const isBassNote = lowestNotePerMeasure.has(note.id);
         const showDegree = degreeStr !== '' && (isSelected || isHovered || isBassNote);
@@ -503,7 +524,7 @@ export const NoteLayer: React.FC<NoteLayerProps> = ({
       ctx.textBaseline = 'alphabetic';
     }
 
-  }, [width, height, scrollX, scrollY, pixelsPerTick, pixelsPerSemitone, notes, selectedNoteIds, velocityDragNoteId, hoveredNoteId, chordToneMap, chordLabels, ticksPerMeasure, scaleRoot, scaleMode, resolutions, useJazzSymbols, ghostNotes, ghostCopyMode]);
+  }, [width, height, scrollX, scrollY, pixelsPerTick, pixelsPerSemitone, notes, selectedNoteIds, velocityDragNoteId, hoveredNoteId, chordToneMap, chordLabels, ticksPerMeasure, scaleRoot, scaleMode, tonalRegions, resolutions, useJazzSymbols, ghostNotes, ghostCopyMode]);
 
   return (
     <canvas
