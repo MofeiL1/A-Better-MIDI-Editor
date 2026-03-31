@@ -48,7 +48,6 @@ export function detectChordBoundaries(
 
   const minSegmentBeats = options.minSegmentBeats ?? 1;
   const pcThreshold = options.pcThreshold ?? 0.1;
-  const pcChangeThreshold = options.pcChangeThreshold ?? 0.6;
   const minSegmentTicks = minSegmentBeats * ticksPerBeat;
 
   // Find time extent

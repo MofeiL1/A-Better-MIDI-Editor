@@ -14,6 +14,7 @@ import { usePreviewNote } from '../../hooks/usePreviewNote';
 import { pixelToTick, yToPitch, snapTick, getSnapTicksFromDivision, getSmartSnapTicks, tickToPixel, tickToSeconds } from '../../utils/timing';
 import { detectResolutions } from '../../utils/chordAnalysis';
 import { detectChordsFromNotes, buildOverlapChordToneMap, buildChordLabels, toChordInfoForKeyDetect } from '../../utils/chordDetection';
+import { detectChordBoundaries } from '../../utils/chordBoundary';
 import type { Note } from '../../types/model';
 
 const DEFAULT_VEL_HEIGHT = 80;
@@ -147,34 +148,44 @@ export const PianoRoll: React.FC = () => {
   const tsDen = ts.denominator ?? 4;
   const ticksPerMeasure = project.ticksPerBeat * tsNum * (4 / tsDen);
 
-  // Overlap-based chord tone map (replaces per-measure buildChordToneMap)
+  // Chord tone map (uses chord boundary detection, excludes dragging note)
   const chordToneMap = useMemo(
     () => buildOverlapChordToneMap(notes, project.ticksPerBeat, drawingNoteId),
     [notes, project.ticksPerBeat, drawingNoteId],
   );
 
-  // Overlap-based chord detection (used for key detection, labels, duration bars)
+  // Convert notes to SimpleNote once for chord boundary + tonal segmentation
+  const simpleNotes = useMemo(
+    () => notes.map((n) => ({ pitch: n.pitch, startTick: n.startTick, duration: n.duration })),
+    [notes],
+  );
+
+  // Chord boundary detection (computed once, shared by chord detection + tonal segmentation)
+  const chordSegments = useMemo(
+    () => detectChordBoundaries(simpleNotes, project.ticksPerBeat),
+    [simpleNotes, project.ticksPerBeat],
+  );
+
+  // Chord detection (names chord segments using tonal.js)
   const detectedChords = useMemo(
     () => detectChordsFromNotes(notes, project.ticksPerBeat),
     [notes, project.ticksPerBeat],
   );
 
-  // Convert to ChordInfo for key detection
+  // Convert to ChordInfo for key detection (uses pre-detected chords)
   const chordsForKeyDetect = useMemo(
-    () => toChordInfoForKeyDetect(notes, project.ticksPerBeat),
-    [notes, project.ticksPerBeat],
+    () => toChordInfoForKeyDetect(detectedChords),
+    [detectedChords],
   );
 
   // Tonal segmentation: per-bar key regions with probabilities
+  // Uses chord segments for accurate structural bass tracking
   const tonalResult = useMemo(() => {
     if (notes.length === 0) return null;
-    const simpleNotes = notes.map((n) => ({
-      pitch: n.pitch,
-      startTick: n.startTick,
-      duration: n.duration,
-    }));
-    return analyzeTonalSegments(simpleNotes, project.ticksPerBeat);
-  }, [notes, project.ticksPerBeat]);
+    return analyzeTonalSegments(simpleNotes, project.ticksPerBeat, {
+      chordSegments,
+    });
+  }, [simpleNotes, project.ticksPerBeat, chordSegments]);
 
   // Derive global key from tonal segmentation
   const scaleRoot = tonalResult?.globalRanking[0]?.root ?? 0;
@@ -189,8 +200,8 @@ export const PianoRoll: React.FC = () => {
 
   // Chord labels (roman numerals for NoteLayer) — uses per-region key
   const chordLabels = useMemo(
-    () => buildChordLabels(notes, project.ticksPerBeat, scaleRoot, tonalRegions),
-    [notes, project.ticksPerBeat, scaleRoot, tonalRegions],
+    () => buildChordLabels(detectedChords, scaleRoot, tonalRegions),
+    [detectedChords, scaleRoot, tonalRegions],
   );
 
   // Resolution detection (V→I, ii→V, tritone sub, etc.)

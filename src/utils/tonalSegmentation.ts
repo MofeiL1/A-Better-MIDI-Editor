@@ -12,6 +12,7 @@
  */
 
 import { SCALE_PATTERNS } from './music';
+import type { ChordSegment } from './chordBoundary';
 
 // ─── Types ───────────────────────────────────────────────
 
@@ -152,19 +153,6 @@ function ksCorrelation(pcDist: Float64Array, rootPc: number, mode: string): numb
   return den > 0 ? num / den : 0;
 }
 
-/** Compute duration-weighted pitch class distribution from a slice. */
-function pcDistFromSlice(slice: TimeSlice): Float64Array {
-  const dist = new Float64Array(12);
-  for (const n of slice.notes) {
-    const pc = ((n.pitch % 12) + 12) % 12;
-    const effStart = Math.max(n.startTick, slice.startTick);
-    const effEnd = Math.min(n.startTick + n.duration, slice.endTick);
-    const w = effEnd - effStart;
-    if (w > 0) dist[pc] += w;
-  }
-  return dist;
-}
-
 /** Compute duration-weighted PC distribution across multiple slices. */
 function pcDistFromSlices(slices: TimeSlice[], start: number, end: number): Float64Array {
   const dist = new Float64Array(12);
@@ -297,7 +285,11 @@ function analyzeSliceChord(slice: TimeSlice): SliceChordInfo {
   };
 }
 
-function sliceByTime(notes: SimpleNote[], sliceWidth: number): TimeSlice[] {
+function sliceByTime(
+  notes: SimpleNote[],
+  sliceWidth: number,
+  chordSegments?: ChordSegment[],
+): TimeSlice[] {
   if (notes.length === 0) return [];
   const maxTick = Math.max(...notes.map((n) => n.startTick + n.duration));
   const numSlices = Math.ceil(maxTick / sliceWidth);
@@ -310,16 +302,53 @@ function sliceByTime(notes: SimpleNote[], sliceWidth: number): TimeSlice[] {
       (n) => n.startTick < end && n.startTick + n.duration > start,
     );
     if (overlapping.length > 0) {
-      const lowestPitch = Math.min(...overlapping.map((n) => n.pitch));
+      // Determine bass PC: prefer structural bass from chord segments
+      let bassPc: number;
+      if (chordSegments) {
+        bassPc = bassFromChordSegments(chordSegments, start, end, overlapping);
+      } else {
+        const lowestPitch = Math.min(...overlapping.map((n) => n.pitch));
+        bassPc = ((lowestPitch % 12) + 12) % 12;
+      }
       slices.push({
         startTick: start,
         endTick: end,
         notes: overlapping,
-        bassPc: ((lowestPitch % 12) + 12) % 12,
+        bassPc,
       });
     }
   }
   return slices;
+}
+
+/**
+ * Determine the bass PC for a time slice from chord segments.
+ *
+ * Strategy: find the chord segment at the bar's downbeat (or earliest onset).
+ * The structural bass from chord boundary detection is perceptually more
+ * accurate than simply taking the lowest pitch of all overlapping notes.
+ */
+function bassFromChordSegments(
+  segments: ChordSegment[],
+  sliceStart: number,
+  sliceEnd: number,
+  fallbackNotes: SimpleNote[],
+): number {
+  // Find the chord segment that contains the slice's start tick (downbeat)
+  for (const seg of segments) {
+    if (seg.startTick <= sliceStart && seg.endTick > sliceStart) {
+      return seg.bassPc;
+    }
+  }
+  // If no segment at downbeat, find the earliest-starting segment in this slice
+  for (const seg of segments) {
+    if (seg.startTick >= sliceStart && seg.startTick < sliceEnd) {
+      return seg.bassPc;
+    }
+  }
+  // Fallback: lowest pitch
+  const lowestPitch = Math.min(...fallbackNotes.map((n) => n.pitch));
+  return ((lowestPitch % 12) + 12) % 12;
 }
 
 // ─── Step 2: Local scoring (pitch class fit only) ────────
@@ -681,6 +710,10 @@ export interface TonalSegmentationOptions {
   transitionSharpness?: number;
   atonalThreshold?: number;
   ambiguityGap?: number;
+  /** Pre-computed chord segments from detectChordBoundaries().
+   *  When provided, uses structural bass from chord segments for more
+   *  accurate bass PC tracking (handles arpeggios, walking bass, etc.). */
+  chordSegments?: ChordSegment[];
 }
 
 export function analyzeTonalSegments(
@@ -692,8 +725,9 @@ export function analyzeTonalSegments(
   const transitionSharpness = options.transitionSharpness ?? 12;
   const atonalThreshold = options.atonalThreshold ?? ATONAL_THRESHOLD;
   const ambiguityGap = options.ambiguityGap ?? AMBIGUITY_GAP;
+  const chordSegments = options.chordSegments;
 
-  const slices = sliceByTime(notes, sliceWidth);
+  const slices = sliceByTime(notes, sliceWidth, chordSegments);
   const T = slices.length;
 
   if (T === 0) {
