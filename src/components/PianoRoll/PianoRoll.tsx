@@ -5,12 +5,14 @@ import { PianoKeys } from './PianoKeys';
 import { VelocityLane } from './VelocityLane';
 import { Ruler, RULER_HEIGHT } from './Ruler';
 import { PlayheadHandle, HANDLE_HEIGHT } from './PlayheadHandle';
+import { ChordTrack } from './ChordTrack';
 import { useProjectStore } from '../../store/projectStore';
 import { useUiStore } from '../../store/uiStore';
 import { usePreviewNote } from '../../hooks/usePreviewNote';
-import { pixelToTick, yToPitch, snapTick, getSnapTicksFromDivision, tickToPixel, tickToSeconds } from '../../utils/timing';
-import { analyzeChords, buildChordToneMap, buildMeasureChordMap, detectResolutions } from '../../utils/chordAnalysis';
+import { pixelToTick, yToPitch, snapTick, getSnapTicksFromDivision, getSmartSnapTicks, tickToPixel, tickToSeconds } from '../../utils/timing';
+import { detectResolutions } from '../../utils/chordAnalysis';
 import { detectKey } from '../../utils/keyDetection';
+import { detectChordsFromNotes, buildOverlapChordToneMap, buildChordLabels, toChordInfoForKeyDetect } from '../../utils/chordDetection';
 import type { Note } from '../../types/model';
 
 const DEFAULT_VEL_HEIGHT = 80;
@@ -36,6 +38,8 @@ export const PianoRoll: React.FC = () => {
   const [selectBox, setSelectBox] = useState<SelectBox>(null);
   const [drawingNoteId, setDrawingNoteId] = useState<string | null>(null);
   const [modifierKeys, setModifierKeys] = useState<{ shift: boolean; cmdCtrl: boolean }>({ shift: false, cmdCtrl: false });
+  const [ghostNotes, setGhostNotes] = useState<{ pitch: number; startTick: number; duration: number; velocity: number }[]>([]);
+  const [ghostCopyMode, setGhostCopyMode] = useState(false);
 
   const project = useProjectStore((s) => s.project);
   const addNote = useProjectStore((s) => s.addNote);
@@ -44,6 +48,7 @@ export const PianoRoll: React.FC = () => {
   const resizeNotes = useProjectStore((s) => s.resizeNotes);
   const trimNoteStart = useProjectStore((s) => s.trimNoteStart);
   const deleteNotes = useProjectStore((s) => s.deleteNotes);
+  const pasteNotes = useProjectStore((s) => s.pasteNotes);
   const setNoteVelocity = useProjectStore((s) => s.setNoteVelocity);
   const beginDrag = useProjectStore((s) => s.beginDrag);
   const endDrag = useProjectStore((s) => s.endDrag);
@@ -53,8 +58,10 @@ export const PianoRoll: React.FC = () => {
     tool, viewport, selectedNoteIds, snapDivision,
     activeClipId, playheadTick, isPlaying,
     scaleRoot, scaleMode, scaleAutoDetect,
+    lastDrawnDuration, useJazzSymbols,
     setViewport, setSelectedNoteIds, clearSelection,
     setActiveClip, setActiveTrack, setPlayheadTick, setScale,
+    setLastDrawnDuration,
   } = useUiStore();
 
   const scrollX = viewport.scrollX;
@@ -98,6 +105,10 @@ export const PianoRoll: React.FC = () => {
         shift: e.shiftKey,
         cmdCtrl: isMac ? e.metaKey : e.ctrlKey,
       });
+      // Update ghost copy mode based on Alt during move drag
+      if (dragState.current.type === 'move') {
+        setGhostCopyMode(e.altKey);
+      }
     };
     const onBlur = () => setModifierKeys({ shift: false, cmdCtrl: false });
     window.addEventListener('keydown', update);
@@ -124,7 +135,9 @@ export const PianoRoll: React.FC = () => {
   const notes = activeClip?.notes ?? [];
 
   const ts = project.timeSignatureChanges[0] ?? { numerator: 4, denominator: 4 };
-  const snapTicks = getSnapTicksFromDivision(snapDivision, project.ticksPerBeat, ts.numerator ?? 4, ts.denominator ?? 4);
+  const snapTicks = snapDivision === 'smart'
+    ? getSmartSnapTicks(ppt, project.ticksPerBeat, ts.numerator ?? 4, ts.denominator ?? 4)
+    : getSnapTicksFromDivision(snapDivision, project.ticksPerBeat, ts.numerator ?? 4, ts.denominator ?? 4);
   const bpm = project.tempoChanges[0]?.bpm ?? 120;
 
   // Chord analysis: per-measure detection with passing tone filter
@@ -132,15 +145,22 @@ export const PianoRoll: React.FC = () => {
   const tsDen = ts.denominator ?? 4;
   const ticksPerMeasure = project.ticksPerBeat * tsNum * (4 / tsDen);
 
+  // Overlap-based chord tone map (replaces per-measure buildChordToneMap)
   const chordToneMap = useMemo(
-    () => buildChordToneMap(notes, project.ticksPerBeat, tsNum, tsDen, drawingNoteId),
-    [notes, project.ticksPerBeat, tsNum, tsDen, drawingNoteId],
+    () => buildOverlapChordToneMap(notes, project.ticksPerBeat, drawingNoteId),
+    [notes, project.ticksPerBeat, drawingNoteId],
   );
 
-  // Chord analysis for key detection (without Roman numerals — those need scaleRoot which may change)
+  // Overlap-based chord detection (used for key detection, labels, duration bars)
+  const detectedChords = useMemo(
+    () => detectChordsFromNotes(notes, project.ticksPerBeat),
+    [notes, project.ticksPerBeat],
+  );
+
+  // Convert to ChordInfo for key detection
   const chordsForKeyDetect = useMemo(
-    () => analyzeChords(notes, project.ticksPerBeat, tsNum, tsDen),
-    [notes, project.ticksPerBeat, tsNum, tsDen],
+    () => toChordInfoForKeyDetect(notes, project.ticksPerBeat),
+    [notes, project.ticksPerBeat],
   );
 
   // Auto key detection
@@ -156,9 +176,10 @@ export const PianoRoll: React.FC = () => {
     }
   }, [scaleAutoDetect, detectedKey, setScale]);
 
-  const measureChordMap = useMemo(
-    () => buildMeasureChordMap(notes, project.ticksPerBeat, tsNum, tsDen, scaleRoot),
-    [notes, project.ticksPerBeat, tsNum, tsDen, scaleRoot],
+  // Chord labels (roman numerals for NoteLayer)
+  const chordLabels = useMemo(
+    () => buildChordLabels(notes, project.ticksPerBeat, scaleRoot),
+    [notes, project.ticksPerBeat, scaleRoot],
   );
 
   // Resolution detection (V→I, ii→V, tritone sub, etc.)
@@ -166,6 +187,27 @@ export const PianoRoll: React.FC = () => {
     () => detectResolutions(chordsForKeyDetect, scaleRoot),
     [chordsForKeyDetect, scaleRoot],
   );
+
+  // ChordTrack drag handlers
+  const handleChordResizeEnd = useCallback((_chordId: string, memberNoteIds: string[], deltaTicks: number) => {
+    if (!activeClipId || memberNoteIds.length === 0) return;
+    resizeNotes(activeClipId, memberNoteIds, deltaTicks);
+  }, [activeClipId, resizeNotes]);
+
+  const handleChordTrimStart = useCallback((_chordId: string, memberNoteIds: string[], deltaTicks: number) => {
+    if (!activeClipId || memberNoteIds.length === 0) return;
+    trimNoteStart(activeClipId, memberNoteIds, deltaTicks);
+  }, [activeClipId, trimNoteStart]);
+
+  const handleSelectChordNotes = useCallback((noteIds: string[], addToSelection: boolean) => {
+    if (addToSelection) {
+      const next = new Set(selectedNoteIds);
+      for (const id of noteIds) next.add(id);
+      setSelectedNoteIds(next);
+    } else {
+      setSelectedNoteIds(new Set(noteIds));
+    }
+  }, [selectedNoteIds, setSelectedNoteIds]);
 
   // drag type extended with trim-start and draw-resize
   const dragState = useRef<{
@@ -274,8 +316,51 @@ export const PianoRoll: React.FC = () => {
             : boxSelected;
           setSelectedNoteIds(selected);
         }
+        // Alt+drag copy: if Alt still held at mouseUp and we did a move,
+        // paste copies of selected notes at their original (pre-move) positions
+        if (ds.type === 'move' && ev.altKey) {
+          const { activeClipId: clipId } = useUiStore.getState();
+          if (clipId) {
+            const clip = useProjectStore.getState().project.tracks
+              .flatMap((t) => t.clips).find((c) => c.id === clipId);
+            const selIds = useUiStore.getState().selectedNoteIds;
+            if (clip) {
+              const movedNotes = clip.notes.filter((n) => selIds.has(n.id));
+              if (movedNotes.length > 0 && ds.noteStartTick !== undefined && ds.notePitch !== undefined) {
+                const currentNote = movedNotes.find((n) => n.id === ds.noteId);
+                if (currentNote) {
+                  const deltaTick = currentNote.startTick - ds.noteStartTick;
+                  const deltaPitch = currentNote.pitch - ds.notePitch;
+                  // Only copy if notes actually moved (prevent in-place duplication)
+                  if (deltaTick !== 0 || deltaPitch !== 0) {
+                    const copies = movedNotes.map(({ id: _, ...rest }) => ({
+                      ...rest,
+                      startTick: rest.startTick - deltaTick,
+                      pitch: rest.pitch - deltaPitch,
+                    }));
+                    const earliestTick = Math.min(...copies.map((n) => n.startTick));
+                    pasteNotes(clipId, copies, earliestTick);
+                  }
+                }
+              }
+            }
+          }
+        }
+
+        // Save drawn note duration for next pencil note
+        const ds2 = dragState.current;
+        if (ds2.type === 'draw-resize' && ds2.noteId) {
+          const drawnNote = useProjectStore.getState().project.tracks
+            .flatMap((t) => t.clips).flatMap((c) => c.notes)
+            .find((n) => n.id === ds2.noteId);
+          if (drawnNote && drawnNote.duration > 0) {
+            setLastDrawnDuration(drawnNote.duration);
+          }
+        }
         setSelectBox(null);
         setDrawingNoteId(null);
+        setGhostNotes([]);
+        setGhostCopyMode(false);
         dragState.current = { type: 'none', startX: 0, startY: 0 };
         endDrag();
       };
@@ -317,12 +402,12 @@ export const PianoRoll: React.FC = () => {
           const newNoteId = addNote(activeClipId, {
             pitch: clampedPitch,
             startTick: Math.max(0, snappedTick),
-            duration: snapTicks,
+            duration: lastDrawnDuration,
             velocity: 80,
             channel: 0,
             pitchBend: [],
           });
-          previewNote(clampedPitch, tickToSeconds(snapTicks, bpm, project.ticksPerBeat), 80);
+          previewNote(clampedPitch, tickToSeconds(lastDrawnDuration, bpm, project.ticksPerBeat), 80);
           clearSelection();
           setDrawingNoteId(newNoteId);
           dragState.current = {
@@ -350,6 +435,7 @@ export const PianoRoll: React.FC = () => {
             } else if (!selectedNoteIds.has(hit.note.id)) {
               setSelectedNoteIds(new Set([hit.note.id]));
             }
+
             previewNote(hit.note.pitch, tickToSeconds(hit.note.duration, bpm, project.ticksPerBeat), hit.note.velocity);
             const noteTick = hit.note.startTick;
             const notePitch = hit.note.pitch;
@@ -362,6 +448,17 @@ export const PianoRoll: React.FC = () => {
               mousePitchOffset: mousePitch - notePitch,
               lastPitch: notePitch,
             };
+
+            // Always capture ghost notes at original positions during move drag
+            if (activeClipId) {
+              const currentSelIds = selectedNoteIds.has(hit.note.id) ? selectedNoteIds : new Set([hit.note.id]);
+              const clip = project.tracks.flatMap((t) => t.clips).find((c) => c.id === activeClipId);
+              if (clip) {
+                setGhostNotes(clip.notes
+                  .filter((n) => currentSelIds.has(n.id))
+                  .map((n) => ({ pitch: n.pitch, startTick: n.startTick, duration: n.duration, velocity: n.velocity })));
+              }
+            }
           }
         } else {
           beginDrag();
@@ -408,8 +505,12 @@ export const PianoRoll: React.FC = () => {
       if (!activeClipId) return;
 
       if (ds.type === 'draw-resize' && ds.noteId && ds.noteStartTick !== undefined) {
-        const currentTick = pixelToTick(mx, ppt, scrollX);
-        const newDuration = Math.max(snapTicks, snapTick(currentTick - ds.noteStartTick, snapTicks, ticksPerMeasure));
+        // Duration: 1:1 relative offset from click point applied to note end.
+        // Mouse delta (px) → tick delta → add to initial duration.
+        const dx = mx - ds.startX;
+        const deltaTicks = dx / ppt;
+        const snappedDelta = Math.round(deltaTicks / snapTicks) * snapTicks;
+        const newDuration = Math.max(snapTicks, lastDrawnDuration + snappedDelta);
         const rawPitch = yToPitch(my, pps, scrollY, size.height);
         const newPitch = Math.min(127, Math.max(0, Math.round(rawPitch)));
         const note = notes.find((n) => n.id === ds.noteId);
@@ -424,6 +525,8 @@ export const PianoRoll: React.FC = () => {
       }
 
       if (ds.type === 'move' && ds.noteId && ds.noteStartTick !== undefined && ds.mouseTickOffset !== undefined && ds.mousePitchOffset !== undefined) {
+        // Update ghost style based on Alt key
+        setGhostCopyMode(e.altKey);
         // Absolute move: compute target from current mouse position minus the recorded offset
         const currentMouseTick = pixelToTick(mx, ppt, scrollX);
         const currentMousePitch = yToPitch(my, pps, scrollY, size.height);
@@ -561,6 +664,26 @@ export const PianoRoll: React.FC = () => {
         />
       </div>
 
+      {/* Chord Track row */}
+      <div style={{ display: 'flex' }}>
+        <div style={{ width: PIANO_KEY_WIDTH, flexShrink: 0, backgroundColor: '#1e1e1e', borderRight: '2px solid #555' }} />
+        <ChordTrack
+          width={gridWidth}
+          height={pps}
+          scrollX={scrollX}
+          pixelsPerTick={ppt}
+          snapTicks={snapTicks}
+          chords={detectedChords}
+          onResizeEnd={handleChordResizeEnd}
+          onTrimStart={handleChordTrimStart}
+          onDragBegin={beginDrag}
+          onDragEnd={endDrag}
+          useJazzSymbols={useJazzSymbols}
+          selectedNoteIds={selectedNoteIds}
+          onSelectChordNotes={handleSelectChordNotes}
+        />
+      </div>
+
       {/* Main grid area */}
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
         <PianoKeys
@@ -582,7 +705,7 @@ export const PianoRoll: React.FC = () => {
             ticksPerBeat={project.ticksPerBeat}
             numerator={ts.numerator}
           denominator={ts.denominator ?? 4}
-            snapDivision={snapDivision}
+            snapTicks={snapTicks}
           />
           <NoteLayer
             width={gridWidth}
@@ -594,11 +717,14 @@ export const PianoRoll: React.FC = () => {
             notes={notes}
             selectedNoteIds={selectedNoteIds}
             chordToneMap={chordToneMap}
-            measureChordMap={measureChordMap}
-            ticksPerMeasure={ticksPerMeasure}
+            chordLabels={chordLabels}
             scaleRoot={scaleRoot}
             scaleMode={scaleMode}
             resolutions={resolutions}
+            ticksPerMeasure={ticksPerMeasure}
+            useJazzSymbols={useJazzSymbols}
+            ghostNotes={ghostNotes}
+            ghostCopyMode={ghostCopyMode}
             cursor={cursor}
             onMouseDown={handleMouseDown}
             onMouseMove={handleMouseMove}

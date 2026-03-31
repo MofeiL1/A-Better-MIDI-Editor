@@ -77,6 +77,35 @@
 - [x] 默认 Demo 项目：16 小节爵士和弦进行（ii-V-I、tritone sub、次属和弦、modal interchange）
 - [x] 和弦标签拆分为两行：上行 Roman numeral（大、亮），下行和弦名（小、暗），顶部一行只有功能分析更干净
 
+### 2026-03-30 完成（第五批 — Chord Track + Smart Snap）
+
+- [x] ChordEvent 数据模型（替换空壳 ChordRegion）
+- [x] Overlap-based 和弦检测（按音符时间重叠分组，替代 per-measure 检测）
+- [x] On-beat/off-beat 权重（off-beat 音符必须延续到 on-beat 才算和弦内音）
+- [x] ChordTrack UI（和弦 duration 色块 + 和弦名，Ruler 下方独立轨道）
+- [x] 和弦边界拖动（拖动和弦边缘同时移动 memberNoteIds 中的音符）
+- [x] 和弦符号系统（直接从 tonal.js 检测结果提取，不再依赖固定映射表）
+- [x] Jazz chord symbols 设置（Settings 面板，△7 °7 ø7，仅在显示层转换）
+- [x] Roman numeral 修复（half-dim → m7b5 后缀，ii-V-I 检测支持 m7b5 → dom7 → x）
+- [x] Resolution 标签定位改为 toTick（右对齐到目标和弦开头前）
+- [x] 三全音替代标签根据目标和弦性质显示 I 或 i
+- [x] Smart Snap（zoom-adaptive 网格，1/32→1/16→1/8→1/4→1/2→1/1，阈值 20px）
+- [x] 铅笔工具音符长度继承（lastDrawnDuration，默认 1/4，拖动后更新）
+- [x] 铅笔拖动采用相对偏移量（1:1 从点击位置偏移到音符结尾）
+- [x] 默认工具改为 Pointer，默认 snap 改为 Smart
+- [x] Settings 齿轮按钮（TransportBar 左上角）
+- [x] 和弦条点击选中所有和弦内音，双向联动（选中所有 member notes → 和弦条高亮）
+- [x] 音符群组移动边界保护（任一音符到边界时整组停止，保持相对位置）
+- [x] 方向键移动选中音符（左右按 snap 精度，上下 1 半音，Shift+上下 1 八度）
+- [x] Alt+拖动复制音符（Logic Pro 风格：拖动时原位显示 ghost，Alt 控制复制/移动切换）
+- [x] Ghost notes 视觉反馈（移动模式：虚线轮廓；复制模式：半透明真实音符样式，实时随 Alt 切换）
+- [x] 和弦标签只在 ChordTrack 显示和弦名，NoteLayer 只显示 Roman numeral（消除重复）
+
+## 已知架构注意事项
+
+- **projectStore 中的 chord CRUD actions**（addChordEvent, updateChordEvent, deleteChordEvent）已定义但尚未被 UI 调用。这些是为未来用户手动创建/编辑和弦预留的接口，目前 ChordTrack 只显示自动检测结果。
+- **双管道和弦数据流**：ChordTrack 使用 `detectedChords`（ChordEvent[]），NoteLayer 使用 `chordToneMap`（Map），两者从同一音符数据通过不同函数派生。当前因为输入相同所以结果一致，但如果未来引入用户手动和弦，需要统一数据源。
+
 ## 当前在做
 
 （无 — 等待用户反馈）

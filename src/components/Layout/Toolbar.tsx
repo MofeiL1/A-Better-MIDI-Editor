@@ -10,6 +10,7 @@ const TOOLS: { mode: ToolMode; label: string; shortcut: string }[] = [
 ];
 
 const SNAP_OPTIONS: { value: SnapResolution; label: string }[] = [
+  { value: 'smart', label: 'Smart' },
   { value: 1, label: '1/1' },
   { value: 2, label: '1/2' },
   { value: 4, label: '1/4' },
@@ -91,7 +92,10 @@ export const Toolbar: React.FC = () => {
       <select
         tabIndex={-1}
         value={snapDivision}
-        onChange={(e) => setSnapDivision(Number(e.target.value) as SnapResolution)}
+        onChange={(e) => {
+          const v = e.target.value;
+          setSnapDivision(v === 'smart' ? 'smart' : Number(v) as SnapResolution);
+        }}
         style={selectStyle}
       >
         {SNAP_OPTIONS.map((o) => (

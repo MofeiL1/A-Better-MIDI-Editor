@@ -30,6 +30,12 @@ interface UiStore {
   // Hover highlight — bidirectional between NoteLayer and VelocityLane
   hoveredNoteId: string | null;
 
+  // Draw tool
+  lastDrawnDuration: number; // ticks, inherited by next pencil note
+
+  // Settings
+  useJazzSymbols: boolean;
+
   setTool: (tool: ToolMode) => void;
   setViewport: (v: Partial<Viewport>) => void;
   setSelectedNoteIds: (ids: Set<string>) => void;
@@ -45,12 +51,14 @@ interface UiStore {
   setAudioLatency: (v: number) => void;
   setSamplerReady: (v: boolean) => void;
   setClipboard: (notes: Note[]) => void;
+  setLastDrawnDuration: (d: number) => void;
   setVelocityDragNoteId: (id: string | null) => void;
   setHoveredNoteId: (id: string | null) => void;
+  setUseJazzSymbols: (v: boolean) => void;
 }
 
 export const useUiStore = create<UiStore>((set) => ({
-  tool: 'draw',
+  tool: 'select',
   viewport: {
     scrollX: 0,
     scrollY: 48, // Start viewing around C3-C5 range
@@ -58,7 +66,7 @@ export const useUiStore = create<UiStore>((set) => ({
     pixelsPerSemitone: 16,
   },
   selectedNoteIds: new Set<string>(),
-  snapDivision: 1, // whole note (1/1) grid
+  snapDivision: 'smart', // zoom-adaptive grid
   activeTrackId: null,
   activeClipId: null,
   isPlaying: false,
@@ -69,8 +77,10 @@ export const useUiStore = create<UiStore>((set) => ({
   audioLatency: 0.05,
   samplerReady: false,
   clipboard: [],
+  lastDrawnDuration: 480, // quarter note at 480 tpb
   velocityDragNoteId: null,
   hoveredNoteId: null,
+  useJazzSymbols: false,
 
   setTool: (tool) => set({ tool }),
   setViewport: (v) =>
@@ -94,6 +104,8 @@ export const useUiStore = create<UiStore>((set) => ({
   setAudioLatency: (v) => set({ audioLatency: v }),
   setSamplerReady: (v) => set({ samplerReady: v }),
   setClipboard: (notes) => set({ clipboard: notes }),
+  setLastDrawnDuration: (d) => set({ lastDrawnDuration: d }),
   setVelocityDragNoteId: (id) => set({ velocityDragNoteId: id }),
   setHoveredNoteId: (id) => set({ hoveredNoteId: id }),
+  setUseJazzSymbols: (v) => set({ useJazzSymbols: v }),
 }));

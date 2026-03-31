@@ -13,7 +13,7 @@ interface GridProps {
   ticksPerBeat: number;
   numerator: number;
   denominator: number;
-  snapDivision: number;
+  snapTicks: number;
 }
 
 export const Grid: React.FC<GridProps> = ({
@@ -26,7 +26,7 @@ export const Grid: React.FC<GridProps> = ({
   ticksPerBeat,
   numerator,
   denominator,
-  snapDivision,
+  snapTicks,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -87,11 +87,6 @@ export const Grid: React.FC<GridProps> = ({
 
     // -- Vertical lines: subdivisions, beats, bars --
     const ticksPerBar = ticksPerBeat * numerator * (4 / denominator);
-    // snapDivision=1 means whole note grid. For non-4/4, "whole note" = one measure.
-    // snapDivision=N means N subdivisions per beat (quarter note base).
-    const snapTicks = snapDivision <= 1
-      ? ticksPerBar  // 1/1 snap = one measure, regardless of time signature
-      : (ticksPerBeat * 4) / snapDivision;
     // Always draw at least every beat for visual reference
     const drawStep = Math.min(snapTicks, ticksPerBeat);
     const startTick = Math.floor(scrollX / drawStep) * drawStep;
@@ -121,7 +116,7 @@ export const Grid: React.FC<GridProps> = ({
       ctx.lineTo(x, height);
       ctx.stroke();
     }
-  }, [width, height, scrollX, scrollY, pixelsPerTick, pixelsPerSemitone, ticksPerBeat, numerator, denominator, snapDivision]);
+  }, [width, height, scrollX, scrollY, pixelsPerTick, pixelsPerSemitone, ticksPerBeat, numerator, denominator, snapTicks]);
 
   return (
     <canvas

@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Project, Note, ProjectSnapshot } from '../types/model';
+import type { Project, Note, ChordEvent, ProjectSnapshot } from '../types/model';
 import { generateId } from '../utils/id';
 import { useUiStore } from './uiStore';
 
@@ -95,7 +95,7 @@ function createDefaultProject(): Project {
     tempoChanges: [{ tick: 0, bpm: 120 }],
     timeSignatureChanges: [{ tick: 0, numerator: 4, denominator: 4 }],
     keyChanges: [{ tick: 0, key: 'C major' }],
-    chordRegions: [],
+    chordEvents: [],
     history: [],
     redoStack: [],
   };
@@ -129,6 +129,11 @@ interface ProjectStore {
   setNoteVelocity: (clipId: string, noteIds: string[], velocity: number) => void;
   setNoteVelocities: (clipId: string, velocities: Map<string, number>) => void;
   pasteNotes: (clipId: string, notes: Omit<Note, 'id'>[], atTick: number) => string[];
+
+  // Chord events
+  addChordEvent: (event: Omit<ChordEvent, 'id'>) => string;
+  updateChordEvent: (id: string, updates: Partial<Omit<ChordEvent, 'id'>>) => void;
+  deleteChordEvent: (id: string) => void;
 
   // Project-level
   loadProject: (project: Project) => void;
@@ -245,6 +250,33 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     if (!get().isDragging) get().pushUndo();
     const { project } = get();
     const idSet = new Set(noteIds);
+
+    // Find the selected notes to clamp the delta for the whole group
+    const clip = project.tracks.flatMap((t) => t.clips).find((c) => c.id === clipId);
+    if (!clip) return;
+    const selected = clip.notes.filter((n) => idSet.has(n.id));
+    if (selected.length === 0) return;
+
+    // Clamp deltaTick: no note should go below startTick 0
+    let clampedDeltaTick = deltaTick;
+    const minStart = Math.min(...selected.map((n) => n.startTick));
+    if (minStart + clampedDeltaTick < 0) {
+      clampedDeltaTick = -minStart;
+    }
+
+    // Clamp deltaPitch: no note should go below 0 or above 127
+    let clampedDeltaPitch = deltaPitch;
+    const minPitch = Math.min(...selected.map((n) => n.pitch));
+    const maxPitch = Math.max(...selected.map((n) => n.pitch));
+    if (minPitch + clampedDeltaPitch < 0) {
+      clampedDeltaPitch = -minPitch;
+    }
+    if (maxPitch + clampedDeltaPitch > 127) {
+      clampedDeltaPitch = 127 - maxPitch;
+    }
+
+    if (clampedDeltaTick === 0 && clampedDeltaPitch === 0) return;
+
     const newProject = { ...project, tracks: project.tracks.map((t) => ({
       ...t,
       clips: t.clips.map((c) =>
@@ -255,8 +287,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
                 idSet.has(n.id)
                   ? {
                       ...n,
-                      startTick: Math.max(0, n.startTick + deltaTick),
-                      pitch: Math.min(127, Math.max(0, n.pitch + deltaPitch)),
+                      startTick: n.startTick + clampedDeltaTick,
+                      pitch: n.pitch + clampedDeltaPitch,
                     }
                   : n
               ),
@@ -390,6 +422,43 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     }))};
     set({ project: newProject });
     return newIds;
+  },
+
+  addChordEvent: (eventData) => {
+    get().pushUndo();
+    const { project } = get();
+    const id = generateId();
+    set({
+      project: {
+        ...project,
+        chordEvents: [...project.chordEvents, { ...eventData, id }],
+      },
+    });
+    return id;
+  },
+
+  updateChordEvent: (id, updates) => {
+    get().pushUndo();
+    const { project } = get();
+    set({
+      project: {
+        ...project,
+        chordEvents: project.chordEvents.map((e) =>
+          e.id === id ? { ...e, ...updates } : e
+        ),
+      },
+    });
+  },
+
+  deleteChordEvent: (id) => {
+    get().pushUndo();
+    const { project } = get();
+    set({
+      project: {
+        ...project,
+        chordEvents: project.chordEvents.filter((e) => e.id !== id),
+      },
+    });
   },
 
   loadProject: (project) => {

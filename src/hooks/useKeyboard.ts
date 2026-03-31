@@ -4,6 +4,7 @@ import { useUiStore } from '../store/uiStore';
 
 export function useKeyboard() {
   const deleteNotes = useProjectStore((s) => s.deleteNotes);
+  const moveNotes = useProjectStore((s) => s.moveNotes);
   const undo = useProjectStore((s) => s.undo);
   const redo = useProjectStore((s) => s.redo);
 
@@ -68,6 +69,40 @@ export function useKeyboard() {
         return;
       }
 
+      // Arrow keys: move selected notes
+      if (e.key.startsWith('Arrow') && selectedNoteIds.size > 0 && activeClipId) {
+        e.preventDefault();
+        const { snapDivision, viewport } = useUiStore.getState();
+        const { ticksPerBeat } = useProjectStore.getState().project;
+        const ts = useProjectStore.getState().project.timeSignatureChanges[0] ?? { numerator: 4, denominator: 4 };
+        // Import getSmartSnapTicks/getSnapTicksFromDivision logic inline
+        let snap: number;
+        if (snapDivision === 'smart') {
+          // Compute smart snap from current zoom
+          const ppt = viewport.pixelsPerTick;
+          const divisions = [32, 16, 8, 4, 2, 1] as const;
+          snap = ticksPerBeat * (ts.numerator ?? 4) * (4 / (ts.denominator ?? 4)); // fallback: 1 bar
+          for (const div of divisions) {
+            const t = div <= 1
+              ? ticksPerBeat * (ts.numerator ?? 4) * (4 / (ts.denominator ?? 4))
+              : (ticksPerBeat * 4) / div;
+            if (t * ppt >= 20) { snap = t; break; }
+          }
+        } else {
+          snap = snapDivision <= 1
+            ? ticksPerBeat * (ts.numerator ?? 4) * (4 / (ts.denominator ?? 4))
+            : (ticksPerBeat * 4) / snapDivision;
+        }
+        const ids = Array.from(selectedNoteIds);
+        switch (e.key) {
+          case 'ArrowLeft':  moveNotes(activeClipId, ids, -snap, 0); break;
+          case 'ArrowRight': moveNotes(activeClipId, ids, snap, 0); break;
+          case 'ArrowUp':    moveNotes(activeClipId, ids, 0, e.shiftKey ? 12 : 1); break;
+          case 'ArrowDown':  moveNotes(activeClipId, ids, 0, e.shiftKey ? -12 : -1); break;
+        }
+        return;
+      }
+
       // Escape to clear selection
       if (e.key === 'Escape') {
         clearSelection();
@@ -77,5 +112,5 @@ export function useKeyboard() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [deleteNotes, undo, redo]);
+  }, [deleteNotes, moveNotes, undo, redo]);
 }

@@ -30,7 +30,7 @@ export type ChordInfo = {
   noteFunctions: Map<string, string>;
 };
 
-const PITCH_CLASS_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+export const PITCH_CLASS_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 
 /**
  * Get the interval label for a note relative to the chord root.
@@ -39,7 +39,7 @@ const PITCH_CLASS_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A',
  * - When the chord contains a 7th (b7 or 7): 2→9, b2→b9, 4→11, 6→13
  * - When the chord has NO 7th: 2→2, 4→4, 6→6 (e.g., Cadd2, Csus4, C6)
  */
-function getChordToneLabel(notePitch: number, rootName: string, has7th: boolean): string {
+export function getChordToneLabel(notePitch: number, rootName: string, has7th: boolean): string {
   const noteName = PITCH_CLASS_NAMES[((notePitch % 12) + 12) % 12];
   const rootMidi = TonalNote.midi(rootName + '4');
   const noteMidi = TonalNote.midi(noteName + '4');
@@ -67,7 +67,7 @@ function getChordToneLabel(notePitch: number, rootName: string, has7th: boolean)
 /**
  * Check if a set of pitch classes (relative to root) contains a 7th (b7 or maj7).
  */
-function chordHas7th(notePitches: number[], rootName: string): boolean {
+export function chordHas7th(notePitches: number[], rootName: string): boolean {
   const rootMidi = TonalNote.midi(rootName + '4');
   if (rootMidi == null) return false;
   for (const pitch of notePitches) {
@@ -81,7 +81,7 @@ function chordHas7th(notePitches: number[], rootName: string): boolean {
  * Score a chord name for "naturalness" — lower is better.
  * Prefers common chord types that match how musicians think.
  */
-function chordComplexityScore(chordName: string): number {
+export function chordComplexityScore(chordName: string): number {
   const parsed = Chord.get(chordName);
   const type = (parsed.type ?? '').toLowerCase();
 
@@ -125,7 +125,7 @@ function chordComplexityScore(chordName: string): number {
  * 2. If any detected chord has the bass note as its root, strongly prefer it
  * 3. Among those, pick the simplest chord type
  */
-function pickBestChord(detected: string[], bassName: string, pitchClasses?: string[]): string | null {
+export function pickBestChord(detected: string[], bassName: string, pitchClasses?: string[]): string | null {
   if (detected.length === 0) return null;
 
   // Filter out invalid interpretations based on actual pitch content
@@ -192,7 +192,7 @@ function pickBestChord(detected: string[], bassName: string, pitchClasses?: stri
  *
  * Returns the best chord name found and which pitch classes were used.
  */
-function detectWithFallback(
+export function detectWithFallback(
   pitchClasses: string[],
   bassName: string,
 ): { chordName: string | null; usedPitchClasses: string[] } {
@@ -500,8 +500,11 @@ export function chordToRomanNumeral(
   const numeral = isMinorFamily ? ROMAN_LOWER[semitones] : ROMAN_UPPER[semitones];
 
   // Build quality suffix
+  const isHalfDim = type.includes('m7b5') || type.includes('half-diminished') || type.includes('ø');
   let suffix = '';
-  if (isDim) {
+  if (isHalfDim) {
+    suffix = 'm7b5';
+  } else if (isDim) {
     suffix = 'dim';
     if (type.includes('7')) suffix += '7';
   } else if (isAug) {
@@ -536,8 +539,14 @@ export function chordToRomanNumeral(
  * Resolution type between two consecutive chords.
  */
 export type ResolutionInfo = {
-  /** Measure where the resolving chord is (the "from" chord) */
+  /** Measure where the resolving chord is (the "from" chord) — legacy */
   fromMeasure: number;
+  /** Tick position of the "from" chord's start */
+  fromTick: number;
+  /** Tick position of the "from" chord's end */
+  endTick: number;
+  /** Tick position of the "to" chord's start (label is right-aligned before this) */
+  toTick: number;
   /** Label to display, e.g. "V→I", "ii→V" */
   label: string;
   /** Resolution category for styling */
@@ -553,10 +562,12 @@ export type ResolutionInfo = {
  * - Root descends P5 (dominant resolution pattern)
  * - Root descends semitone + dominant quality (tritone substitution)
  */
-/** Helper: is this chord type minor-family? */
+/** Helper: is this chord type minor-family? (includes half-diminished / m7b5) */
 function isMinorType(type: string): boolean {
   const t = type.toLowerCase();
-  return t.includes('minor') || t === 'm' || t === 'm7' || t === 'm9' || t === 'm11' ||
+  return t.includes('minor') || t.includes('dim') ||
+    t.includes('m7b5') || t.includes('half-diminished') ||
+    t === 'm' || t === 'm7' || t === 'm9' || t === 'm11' ||
     (t.startsWith('m') && !t.startsWith('maj'));
 }
 
@@ -602,18 +613,25 @@ export function detectResolutions(
     if (rootInterval(iiIdx, vIdx) === 5 && isMinorType(iiType) &&
         rootInterval(vIdx, oneIdx) === 5 && isDominantType(vType)) {
       // Mark both pairs as part of ii-V-I (use 'predominant' color to distinguish from standalone V→I)
-      const iiSuffix = iiType.includes('7') ? '7' : '';
+      const isIiHalfDim = iiType.includes('m7b5') || iiType.includes('half-diminished');
+      const iiSuffix = isIiHalfDim ? 'm7b5' : (iiType.includes('7') ? '7' : '');
       const vSuffix = vType.includes('7') || vType.includes('dominant') ? '7' : '';
       const oneType = (one.chordType ?? '').toLowerCase();
       const oneIsMinor = isMinorType(oneType);
       const target = oneIsMinor ? 'i' : 'I';
       results.push({
         fromMeasure: ii.measure,
+        fromTick: ii.startTick,
+        endTick: ii.endTick,
+        toTick: v.startTick,
         label: `ii${iiSuffix}\u2192V`,
         type: 'predominant',
       });
       results.push({
         fromMeasure: v.measure,
+        fromTick: v.startTick,
+        endTick: v.endTick,
+        toTick: one.startTick,
         label: `V${vSuffix}\u2192${target}`,
         type: 'predominant',
       });
@@ -648,6 +666,9 @@ export function detectResolutions(
       const target = isMinorType(toType) ? 'i' : 'I';
       results.push({
         fromMeasure: from.measure,
+        fromTick: from.startTick,
+        endTick: from.endTick,
+        toTick: to.startTick,
         label: `${roman}${suffix}\u2192${target}`,
         type: 'dominant',
       });
@@ -657,9 +678,14 @@ export function detectResolutions(
     // Tritone substitution: root descends semitone, dominant-quality
     if (interval === 11 && isDominantType(fromType)) {
       const suffix = fromType.includes('7') || fromType.includes('dominant') ? '7' : '';
+      const toType = (to.chordType ?? '').toLowerCase();
+      const target = isMinorType(toType) ? 'i' : 'I';
       results.push({
         fromMeasure: from.measure,
-        label: `bII${suffix}\u2192I`,
+        fromTick: from.startTick,
+        endTick: from.endTick,
+        toTick: to.startTick,
+        label: `bII${suffix}\u2192${target}`,
         type: 'tritone-sub',
       });
       continue;

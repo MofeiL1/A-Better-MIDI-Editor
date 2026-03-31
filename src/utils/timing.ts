@@ -63,6 +63,30 @@ export function getSnapTicksFromDivision(
   return (ticksPerBeat * 4) / division;
 }
 
+/**
+ * Smart snap: pick the finest grid subdivision where grid lines are >= minPx apart.
+ * Hierarchy: 1/32 → 1/16 → 1/8 → 1/4 → 1/2 → 1/1 (whole bar).
+ */
+const SMART_DIVISIONS = [32, 16, 8, 4, 2, 1] as const;
+const SMART_MIN_PX = 20; // minimum pixels between grid lines
+
+export function getSmartSnapTicks(
+  pixelsPerTick: number,
+  ticksPerBeat: number,
+  numerator: number = 4,
+  denominator: number = 4,
+): number {
+  for (const div of SMART_DIVISIONS) {
+    const ticks = div <= 1
+      ? ticksPerBeat * numerator * (4 / denominator)
+      : (ticksPerBeat * 4) / div;
+    const px = ticks * pixelsPerTick;
+    if (px >= SMART_MIN_PX) return ticks;
+  }
+  // Fallback: whole bar
+  return ticksPerBeat * numerator * (4 / denominator);
+}
+
 export function tickToSeconds(tick: number, bpm: number, ticksPerBeat: number): number {
   return (tick / ticksPerBeat) * (60 / bpm);
 }

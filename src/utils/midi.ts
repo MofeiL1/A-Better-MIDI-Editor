@@ -86,7 +86,7 @@ export function buildProjectFromMidi(midi: Midi, fileName: string, trackIndices?
     tempoChanges,
     timeSignatureChanges,
     keyChanges: [{ tick: 0, key: 'C major' }],
-    chordRegions: [],
+    chordEvents: [],
     history: [],
     redoStack: [],
   };

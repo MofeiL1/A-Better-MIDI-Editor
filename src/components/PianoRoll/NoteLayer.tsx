@@ -1,6 +1,8 @@
 import React, { useRef, useEffect } from 'react';
 import type { Note } from '../../types/model';
-import type { ResolutionInfo, MeasureChordLabel } from '../../utils/chordAnalysis';
+import type { ResolutionInfo } from '../../utils/chordAnalysis';
+import type { ChordLabel } from '../../utils/chordDetection';
+import { applyJazzSymbols } from '../../utils/chordFormat';
 import { pitchClass, getScaleDegreeName } from '../../utils/music';
 import { useUiStore } from '../../store/uiStore';
 
@@ -15,16 +17,22 @@ interface NoteLayerProps {
   selectedNoteIds: Set<string>;
   /** noteId -> chord tone label ("R", "3", "5", "b7", etc.) */
   chordToneMap?: Map<string, string>;
-  /** measure index -> chord label (name + roman numeral) */
-  measureChordMap?: Map<number, MeasureChordLabel>;
-  /** Ticks per measure, needed to render chord names at measure positions */
-  ticksPerMeasure?: number;
+  /** Chord labels (roman numerals) positioned at each chord's startTick */
+  chordLabels?: ChordLabel[];
   /** Scale root (0-11) for scale degree display */
   scaleRoot?: number;
   /** Scale mode for scale degree display */
   scaleMode?: string;
   /** Resolution relationships between consecutive chords */
   resolutions?: ResolutionInfo[];
+  /** Ticks per measure, needed for resolution label positioning */
+  ticksPerMeasure?: number;
+  /** Whether to display jazz graphic symbols */
+  useJazzSymbols?: boolean;
+  /** Ghost notes shown during drag at original positions */
+  ghostNotes?: { pitch: number; startTick: number; duration: number; velocity: number }[];
+  /** If true, ghost notes look like real notes (semi-transparent) for copy mode */
+  ghostCopyMode?: boolean;
   cursor?: string;
   onMouseDown?: (e: React.MouseEvent<HTMLCanvasElement>) => void;
   onMouseMove?: (e: React.MouseEvent<HTMLCanvasElement>) => void;
@@ -61,11 +69,14 @@ export const NoteLayer: React.FC<NoteLayerProps> = ({
   notes,
   selectedNoteIds,
   chordToneMap,
-  measureChordMap,
-  ticksPerMeasure,
+  chordLabels,
   scaleRoot,
   scaleMode,
   resolutions,
+  ticksPerMeasure,
+  useJazzSymbols,
+  ghostNotes,
+  ghostCopyMode,
   cursor = 'crosshair',
   onMouseDown,
   onMouseMove,
@@ -347,85 +358,101 @@ export const NoteLayer: React.FC<NoteLayerProps> = ({
       }
     };
 
+    // Ghost notes — drawn first so they appear behind real notes
+    if (ghostNotes && ghostNotes.length > 0) {
+      for (const g of ghostNotes) {
+        const nx = (g.startTick - scrollX) * pixelsPerTick;
+        const nw = g.duration * pixelsPerTick;
+        const noteH = pixelsPerSemitone;
+        const ny = height - (g.pitch - scrollY + 1) * noteH;
+        if (nx + nw < 0 || nx > width || ny + noteH < 0 || ny > height) continue;
+
+        if (ghostCopyMode) {
+          // Copy mode: looks like a real note but semi-transparent
+          const hue = velocityToHue(g.velocity);
+          ctx.globalAlpha = 0.4;
+          ctx.fillStyle = `hsl(${hue}, 65%, ${30 + (g.velocity / 127) * 18}%)`;
+          ctx.beginPath();
+          ctx.roundRect(nx, ny + 1, nw, noteH - 2, 3);
+          ctx.fill();
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.roundRect(nx, ny + 1, nw, noteH - 2, 3);
+          ctx.stroke();
+          ctx.globalAlpha = 1;
+        } else {
+          // Move mode: faint outline only
+          ctx.fillStyle = 'rgba(100, 160, 255, 0.1)';
+          ctx.strokeStyle = 'rgba(100, 160, 255, 0.25)';
+          ctx.lineWidth = 1;
+          ctx.setLineDash([3, 3]);
+          ctx.beginPath();
+          ctx.roundRect(nx, ny + 1, nw, noteH - 2, 3);
+          ctx.fill();
+          ctx.stroke();
+          ctx.setLineDash([]);
+        }
+      }
+    }
+
     for (const note of unselected) drawNote(note, false);
     for (const note of selected) drawNote(note, true);
 
-    // Draw chord labels at top of each measure — Roman numeral on top, chord name below
-    if (measureChordMap && measureChordMap.size > 0 && ticksPerMeasure) {
+    // Display formatter: apply jazz symbols if enabled
+    const fmt = (s: string) => useJazzSymbols ? applyJazzSymbols(s) : s;
+
+    // Draw Roman numeral labels at each chord's startTick (chord names are in ChordTrack)
+    if (chordLabels && chordLabels.length > 0) {
       ctx.textBaseline = 'top';
       const padX = 5;
       const padY = 2;
 
-      for (const [measure, label] of measureChordMap) {
-        const measureStartTick = measure * ticksPerMeasure;
-        const x = (measureStartTick - scrollX) * pixelsPerTick;
+      for (const label of chordLabels) {
+        const romanText = fmt(label.roman);
+        if (!romanText) continue;
+
+        const x = (label.startTick - scrollX) * pixelsPerTick;
         if (x < -100 || x > width + 100) continue;
 
         const bgX = x + 4;
-        let curY = 4;
+        const curY = 4;
+        const romanFontSize = 12;
+        ctx.font = `700 ${romanFontSize}px -apple-system, "SF Pro Text", "Helvetica Neue", sans-serif`;
+        const romanW = ctx.measureText(romanText).width;
+        const rBgW = romanW + padX * 2;
+        const rBgH = romanFontSize + padY * 2;
 
-        // Row 1: Roman numeral (if available)
-        if (label.roman) {
-          const romanFontSize = 12;
-          ctx.font = `700 ${romanFontSize}px -apple-system, "SF Pro Text", "Helvetica Neue", sans-serif`;
-          const romanW = ctx.measureText(label.roman).width;
-          const rBgW = romanW + padX * 2;
-          const rBgH = romanFontSize + padY * 2;
-
-          ctx.fillStyle = 'rgba(30, 30, 36, 0.85)';
-          ctx.beginPath();
-          ctx.roundRect(bgX, curY, rBgW, rBgH, 4);
-          ctx.fill();
-
-          ctx.strokeStyle = 'rgba(120, 180, 255, 0.4)';
-          ctx.lineWidth = 1;
-          ctx.beginPath();
-          ctx.roundRect(bgX, curY, rBgW, rBgH, 4);
-          ctx.stroke();
-
-          ctx.fillStyle = 'rgba(200, 220, 255, 0.95)';
-          ctx.fillText(label.roman, bgX + padX, curY + padY);
-
-          curY += rBgH + 2;
-        }
-
-        // Row 2: Chord name (smaller, dimmer)
-        const nameFontSize = 10;
-        ctx.font = `500 ${nameFontSize}px -apple-system, "SF Pro Text", "Helvetica Neue", sans-serif`;
-        const nameW = ctx.measureText(label.name).width;
-        const nBgW = nameW + padX * 2;
-        const nBgH = nameFontSize + padY * 2;
-
-        ctx.fillStyle = 'rgba(30, 30, 36, 0.7)';
+        ctx.fillStyle = 'rgba(30, 30, 36, 0.85)';
         ctx.beginPath();
-        ctx.roundRect(bgX, curY, nBgW, nBgH, 3);
+        ctx.roundRect(bgX, curY, rBgW, rBgH, 4);
         ctx.fill();
 
-        ctx.strokeStyle = 'rgba(100, 150, 200, 0.25)';
-        ctx.lineWidth = 0.5;
+        ctx.strokeStyle = 'rgba(120, 180, 255, 0.4)';
+        ctx.lineWidth = 1;
         ctx.beginPath();
-        ctx.roundRect(bgX, curY, nBgW, nBgH, 3);
+        ctx.roundRect(bgX, curY, rBgW, rBgH, 4);
         ctx.stroke();
 
-        ctx.fillStyle = 'rgba(170, 190, 220, 0.8)';
-        ctx.fillText(label.name, bgX + padX, curY + padY);
+        ctx.fillStyle = 'rgba(200, 220, 255, 0.95)';
+        ctx.fillText(romanText, bgX + padX, curY + padY);
       }
       ctx.textBaseline = 'alphabetic';
     }
 
-    // Draw resolution labels at end of "from" measure (right-aligned before barline)
-    if (resolutions && resolutions.length > 0 && ticksPerMeasure) {
+    // Draw resolution labels right-aligned before the "to" chord's start
+    if (resolutions && resolutions.length > 0) {
       const resFontSize = 10;
       ctx.textBaseline = 'top';
 
       for (const res of resolutions) {
-        // Position: end of the "from" measure
-        const measureEndTick = (res.fromMeasure + 1) * ticksPerMeasure;
-        const endX = (measureEndTick - scrollX) * pixelsPerTick;
+        // Position: right-aligned before the target chord's start
+        const endX = (res.toTick - scrollX) * pixelsPerTick;
         if (endX < -50 || endX > width + 50) continue;
 
         ctx.font = `600 ${resFontSize}px -apple-system, "SF Pro Text", "Helvetica Neue", sans-serif`;
-        const textW = ctx.measureText(res.label).width;
+        const resText = fmt(res.label);
+        const textW = ctx.measureText(resText).width;
         const padX = 4;
         const padY = 2;
         const bgW = textW + padX * 2;
@@ -471,12 +498,12 @@ export const NoteLayer: React.FC<NoteLayerProps> = ({
 
         // Text
         ctx.fillStyle = textColor;
-        ctx.fillText(res.label, bgX + padX, bgY + padY);
+        ctx.fillText(resText, bgX + padX, bgY + padY);
       }
       ctx.textBaseline = 'alphabetic';
     }
 
-  }, [width, height, scrollX, scrollY, pixelsPerTick, pixelsPerSemitone, notes, selectedNoteIds, velocityDragNoteId, hoveredNoteId, chordToneMap, measureChordMap, ticksPerMeasure, scaleRoot, scaleMode, resolutions]);
+  }, [width, height, scrollX, scrollY, pixelsPerTick, pixelsPerSemitone, notes, selectedNoteIds, velocityDragNoteId, hoveredNoteId, chordToneMap, chordLabels, ticksPerMeasure, scaleRoot, scaleMode, resolutions, useJazzSymbols, ghostNotes, ghostCopyMode]);
 
   return (
     <canvas

@@ -8,7 +8,7 @@ export type Project = {
   tempoChanges: TempoChange[];
   timeSignatureChanges: TimeSignatureChange[];
   keyChanges: KeyChange[];
-  chordRegions: ChordRegion[];
+  chordEvents: ChordEvent[];
 
   history: ProjectSnapshot[];
   redoStack: ProjectSnapshot[];
@@ -30,9 +30,21 @@ export type KeyChange = {
   key: string; // e.g. "C major", "A minor"
 };
 
-export type ChordRegion = {
+// ─── Chord Event（和弦轨道条目） ──────────────────────────
+
+export type ChordEvent = {
+  id: string;
   startTick: number;
   endTick: number;
+
+  root: number;           // 0-11 pitch class
+  quality: string;        // "maj7", "m7", "7", "dim7", "m7b5", etc.
+  bass?: number;          // slash chord bass note, 0-11 pitch class
+
+  source: 'user' | 'detected';
+  confidence?: number;    // 0-1, only meaningful for detected
+
+  memberNoteIds?: string[];
 };
 
 // ─── Track 层 ────────────────────────────────────────────

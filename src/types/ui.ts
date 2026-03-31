@@ -7,7 +7,7 @@ export type Viewport = {
   pixelsPerSemitone: number;
 };
 
-export type SnapResolution = 1 | 2 | 4 | 8 | 16 | 32; // in beats subdivision
+export type SnapResolution = 'smart' | 1 | 2 | 4 | 8 | 16 | 32; // 'smart' = zoom-adaptive
 
 export type UiState = {
   tool: ToolMode;

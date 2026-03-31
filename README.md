@@ -16,8 +16,20 @@ As a musician, I always felt like the tools in mainstream DAWs weren't quite the
 
 ## What's in it / 目前有什么
 
-- **Chord analysis & resolution detection** — Per-measure chord detection with passing tone filtering, chord-tone badges (R, 3, 5, 7...), Roman numeral analysis, and resolution arrows (V-I, ii-V-I, tritone substitution).
-- **和弦分析与解决关系检测** — 按小节检测和弦（过滤经过音），和弦内音标签（R, 3, 5, 7...），Roman numeral 分析，解决关系箭头（V-I、ii-V-I、三全音替代）。
+- **Chord Track with overlap-based detection** — Automatic chord detection based on note temporal overlap and beat-weight analysis (not fixed per-measure). Dedicated chord lane with draggable boundaries that move member notes. Click a chord to select all its notes.
+- **和弦轨道（基于重叠检测）** — 根据音符时间重叠和强弱拍权重自动检测和弦（非固定按小节）。独立和弦条，可拖动边界联动内部音符。点击和弦即选中所有和弦内音。
+
+- **Smart Snap** — Zoom-adaptive grid that automatically adjusts snap resolution as you zoom in/out (1/32 to whole bar). Like Logic Pro's Smart snap mode.
+- **智能吸附** — 缩放自适应网格，放大时自动变细、缩小时自动变粗（1/32 到整小节），类似 Logic Pro 的 Smart 吸附模式。
+
+- **Jazz chord symbols** — Optional display mode (Settings) that converts standard chord notation to jazz symbols: maj7 to triangle-7, dim to degree sign, m7b5 to slashed-circle-7.
+- **Jazz 和弦符号** — 可选显示模式（设置面板），将标准和弦名转为 Jazz 符号：maj7 变 triangle-7，dim 变度数符号，m7b5 变斜线圆圈-7。
+
+- **Alt+drag note duplication** — Hold Alt while dragging to copy notes (Logic Pro style). Ghost notes at the original position show move vs copy mode in real time.
+- **Alt+拖动复制音符** — 拖动时按住 Alt 复制音符（Logic Pro 风格）。原位 ghost 实时切换移动/复制样式。
+
+- **Chord analysis & resolution detection** — Overlap-based chord detection with on-beat/off-beat weighting, chord-tone badges (R, 3, 5, 7...), Roman numeral analysis, and resolution arrows (V-I, ii-V-I, tritone substitution with correct target quality).
+- **和弦分析与解决关系检测** — 基于重叠的和弦检测（强弱拍权重），和弦内音标签（R, 3, 5, 7...），Roman numeral 分析，解决关系箭头（V-I、ii-V-I、三全音替代，根据目标和弦性质显示大小写）。
 
 - **Auto key detection** — Detects the most likely key from your notes. Scores 72 candidates (12 roots x 6 modes) by note coverage and tonic chord presence. One-click confirm to lock.
 - **自动调性检测** — 根据已有音符自动检测最可能的调性。对 72 个候选调（12 个根音 x 6 种调式）打分，参考音符覆盖率和主和弦存在性。一键确认锁定。
@@ -56,6 +68,9 @@ As a musician, I always felt like the tools in mainstream DAWs weren't quite the
 | Delete / Backspace | Delete selected 删除选中 |
 | Escape | Clear selection 清除选区 |
 | Shift+单击 Click | Add to selection 加选 |
+| Arrow keys 方向键 | Move selected notes (left/right by snap, up/down by semitone) 移动选中音符 |
+| Shift+Up/Down 上/下 | Move selected notes by octave 移动选中音符一个八度 |
+| Alt+Drag 拖动 | Duplicate notes (release Alt before mouseup to cancel) 复制音符 |
 | Shift (Pencil mode) | Temporary Pointer tool 临时切换为指针工具 |
 | Ctrl/Cmd (Pointer mode) | Temporary Pencil tool 临时切换为画笔工具 |
 | 鼠标中键按住拖动 Hold Middle Mouse | Joystick pan — speed follows distance from origin 摇杆式平移，速度随离原点距离变化 |
@@ -70,9 +85,9 @@ React 18, TypeScript, Vite, Zustand, Tone.js, Canvas. No backend.
 
 ## Planned / 计划中
 
-- **Smart Snap / 智能吸附** — Snap resolution adapts to mouse drag speed. [Design doc / 设计文档](TASKS.md)
-- **智能吸附** — Snap 粒度随鼠标拖拽速度自适应。
+- Voicing system (assign voicings to chord regions) / Voicing 系统（给和弦区域分配排列）
 - Chord velocity visualization / 和弦内力度分布可视化
+- User-created chord events / 用户手动创建和弦
 
 ## Future Outlook / 未来展望
 
