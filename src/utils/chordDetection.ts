@@ -14,6 +14,7 @@ import type { ChordEvent } from '../types/model';
 import {
   PITCH_CLASS_NAMES,
   detectWithFallback,
+  chordComplexityScore,
   getChordToneLabel,
   chordToRomanNumeral,
 } from './chordAnalysis';
@@ -51,16 +52,60 @@ type SegmentChordResult = {
 /**
  * Analyze a ChordSegment to determine chord name, root, quality, and bass.
  * Returns null if the segment can't be identified as a chord.
+ *
+ * When the full PC set gives a non-bass-rooted chord (common when melody
+ * notes contaminate the harmony), tries dropping PCs to find a simpler
+ * bass-rooted interpretation. E.g., {C,E,G,A,B} with bass C → Am9/C,
+ * but dropping A gives {C,E,G,B} → Cmaj7 (bass-rooted, preferred).
  */
 function analyzeChordSegment(seg: ChordSegment): SegmentChordResult | null {
-  const pitchClasses = [...seg.pcs].map(pc => PITCH_CLASS_NAMES[pc]);
+  // Sort PCs by weight descending so we can prioritize dropping low-weight PCs
+  const sortedPcs = [...seg.pcs]
+    .map(pc => ({ pc, weight: seg.pcWeights[pc] }))
+    .sort((a, b) => b.weight - a.weight);
+
+  const pitchClasses = sortedPcs.map(p => PITCH_CLASS_NAMES[p.pc]);
   if (pitchClasses.length < 2) return null;
 
   const bassName = PITCH_CLASS_NAMES[seg.bassPc];
-  const { chordName } = detectWithFallback(pitchClasses, bassName);
+
+  // Try full set first
+  let result = detectWithFallback(pitchClasses, bassName);
+  let chordName = result.chordName;
   if (!chordName) return null;
 
-  const parsed = Chord.get(chordName);
+  // If detected root != bass and we have enough PCs, try dropping
+  // low-weight non-bass PCs to find a bass-rooted chord.
+  // This removes melody/passing tones that confuse the harmony.
+  let parsed = Chord.get(chordName);
+  if (parsed.tonic && parsed.tonic !== bassName && pitchClasses.length > 3) {
+    let bestBassRootedName: string | null = null;
+    let bestScore = Infinity;
+
+    // Try dropping each non-bass PC, starting from lowest weight
+    for (let i = pitchClasses.length - 1; i >= 0; i--) {
+      if (pitchClasses[i] === bassName) continue;
+      const subset = pitchClasses.filter((_, idx) => idx !== i);
+      if (subset.length < 2) continue;
+      const sub = detectWithFallback(subset, bassName);
+      if (sub.chordName) {
+        const subParsed = Chord.get(sub.chordName);
+        if (subParsed.tonic === bassName) {
+          const score = chordComplexityScore(sub.chordName);
+          if (score < bestScore) {
+            bestBassRootedName = sub.chordName;
+            bestScore = score;
+          }
+        }
+      }
+    }
+
+    if (bestBassRootedName) {
+      chordName = bestBassRootedName;
+      parsed = Chord.get(chordName);
+    }
+  }
+
   let root = parsed.tonic ?? null;
   let chordType = parsed.type ?? null;
   let bass: number | undefined;

@@ -38,7 +38,7 @@ export function detectChordBoundaries(
   options: {
     /** Minimum segment duration in beats (default: 1) */
     minSegmentBeats?: number;
-    /** PC weight threshold as fraction of max weight to be in pcs set (default: 0.1) */
+    /** PC weight threshold as fraction of max weight to be in pcs set (default: 0.05) */
     pcThreshold?: number;
     /** Jaccard distance threshold for PC set change without bass change (default: 0.6) */
     pcChangeThreshold?: number;
@@ -47,7 +47,7 @@ export function detectChordBoundaries(
   if (notes.length === 0) return [];
 
   const minSegmentBeats = options.minSegmentBeats ?? 1;
-  const pcThreshold = options.pcThreshold ?? 0.1;
+  const pcThreshold = options.pcThreshold ?? 0.05;
   const minSegmentTicks = minSegmentBeats * ticksPerBeat;
 
   // Find time extent
@@ -190,12 +190,28 @@ export function detectChordBoundaries(
       isBoundary = true;
     }
 
-    // Secondary signal: new onsets introduce PCs not in accumulated set
-    // (detects pedal point / sustained bass situations where bass stays but harmony changes)
-    if (!isBoundary && curr.onsetNotes.length >= 2 && accumPcs.size > 0) {
-      const newPcs = [...curr.onsetPcs].filter(pc => !accumPcs.has(pc));
-      if (newPcs.length >= 2) {
-        isBoundary = true;
+    // Secondary signal: pedal point detection — bass stays the same but
+    // upper voices change to a new chord (e.g., C pedal: C-E-G → C-F-A).
+    //
+    // To avoid false positives on arpeggios (where different PCs appear on
+    // different beats of the SAME chord), require that the new PCs come from
+    // near-simultaneous onsets (block chord indicator). Arpeggios spread
+    // notes across time; real chord changes stack them.
+    if (!isBoundary && curr.onsetNotes.length >= 3 && accumPcs.size > 0) {
+      // Check how many notes start near-simultaneously (within a 16th note)
+      const onsetTimes = curr.onsetNotes.map(n => n.startTick);
+      const earliest = Math.min(...onsetTimes);
+      const simultaneousThreshold = ticksPerBeat / 4; // 16th note
+      const simultaneousNotes = curr.onsetNotes.filter(n =>
+        n.startTick - earliest <= simultaneousThreshold,
+      );
+      // Need at least 3 simultaneous notes forming a new chord
+      if (simultaneousNotes.length >= 3) {
+        const simPcs = new Set(simultaneousNotes.map(n => ((n.pitch % 12) + 12) % 12));
+        const newPcs = [...simPcs].filter(pc => !accumPcs.has(pc));
+        if (newPcs.length >= 2) {
+          isBoundary = true;
+        }
       }
     }
 
