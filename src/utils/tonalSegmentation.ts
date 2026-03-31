@@ -46,6 +46,28 @@ export type RankedKey = {
   candidateIdx: number;
 };
 
+/** Binary probability for a specific key: "P(this region IS in this key)". */
+export type KeyProbability = {
+  root: number;
+  mode: string;
+  /**
+   * Binary probability: "how likely is it that this region is in this key?"
+   * = fitScore × tonicConfidence
+   *
+   * fitScore: what % of the region's notes (weighted) fall in this key's scale.
+   * tonicConfidence: how strongly bass/V→I/position signals point to this root
+   *   as the tonic (normalized within same-pitch-class-set groups).
+   *
+   * These DO NOT sum to 100% across keys — each key is an independent
+   * yes/no question. C major = 92% and A minor = 78% can coexist.
+   */
+  probability: number;
+  /** The raw fit score component (0-1): what % of notes are in-scale */
+  fitScore: number;
+  /** The tonic confidence component (0-1): how likely this is the tonic */
+  tonicConfidence: number;
+};
+
 /** A contiguous region with a consistent tonal center. */
 export type TonalRegion = {
   startTick: number;
@@ -53,15 +75,11 @@ export type TonalRegion = {
   startBar: number;  // 0-indexed bar number
   endBar: number;    // inclusive
   type: 'stable' | 'transition';
-  /**
-   * Bayesian posterior: P(key | all notes in this region).
-   * Top candidates with proper probabilities (sum ≈ 1 across all 72).
-   * Only the top entries are meaningful; tail is near-zero.
-   */
-  keyRanking: RankedKey[];
+  /** Top key candidates with binary probabilities (independent, don't sum to 100%) */
+  keyProbabilities: KeyProbability[];
   /** Shortcut: best key */
   bestKey: { root: number; mode: string };
-  /** P(bestKey | region) — the headline probability users see (e.g. 0.42 = "42%") */
+  /** P(this region IS in bestKey) — the headline number users see (e.g. 0.92 = "92%") */
   bestKeyProbability: number;
   /** True if bestKey and #2 are close — suggest user confirmation */
   isAmbiguous: boolean;
@@ -452,6 +470,7 @@ export function analyzeTonalSegments(
     return {
       candidates: CANDIDATES,
       segments: [],
+      regions: [],
       distanceMatrix: DISTANCE_MATRIX,
       globalRanking: [],
       isLikelyAtonal: true,
@@ -573,17 +592,15 @@ export function analyzeTonalSegments(
 
 /**
  * Identify contiguous regions from per-segment results, pool their notes,
- * and compute proper Bayesian P(key | region_notes) for each region.
+ * and compute binary key probabilities for each region.
  *
- * A region is "stable" if all its segments agree on the same best key.
- * A region is "transition" if it contains pivot chords or key changes.
+ * Binary probability = fitScore × tonicConfidence (independent per key).
+ *   - fitScore: what % of the region's notes fall in this key's scale (0-1)
+ *   - tonicConfidence: how strongly bass/V→I/position signals point to this
+ *     root as the tonic, normalized within same-pitch-class-set group (0-1)
  *
- * The key probability is computed by:
- *   1. Pool all notes in the region
- *   2. Compute weighted fit score per candidate (count × duration)
- *   3. Apply per-region tonic signals (bass, V→I, position, major preference)
- *   4. Sharpen with temperature scaling so probabilities are decisive
- *   5. Normalize → proper posterior distribution over 72 candidates
+ * These do NOT sum to 100% across keys. C major = 92% and A minor = 80%
+ * can coexist, because they answer independent questions.
  */
 function buildRegions(
   segments: SegmentResult[],
@@ -617,9 +634,10 @@ function buildRegions(
     }
   }
 
-  // Build final regions with Bayesian posteriors
-  const TEMPERATURE = 4; // sharpening factor for probability distribution
-  const REGION_AMBIGUITY_THRESHOLD = 0.08; // #1 - #2 < 8% → ambiguous
+  // Build final regions with binary key probabilities
+  // Each key gets an independent P(region IS in this key) = fitScore × tonicConfidence
+  // These do NOT sum to 100% — they are independent yes/no questions.
+  const REGION_AMBIGUITY_GAP = 0.10; // best - #2 < 10% → ambiguous
 
   const regions: TonalRegion[] = [];
 
@@ -632,16 +650,16 @@ function buildRegions(
       }
     }
 
-    // Compute fit scores for the pooled region
+    // Compute fit scores for the pooled region (0-1: what % of notes are in-scale)
     const regionSlice: TimeSlice = {
       startTick: slices[r.start].startTick,
       endTick: slices[r.end].endTick,
       notes: pooledNotes,
-      bassPc: slices[r.start].bassPc, // doesn't matter, we recompute below
+      bassPc: slices[r.start].bassPc,
     };
-    const rawScores = scoreSlice(regionSlice);
+    const fitScoresArr = scoreSlice(regionSlice);
 
-    // Apply tonic signals for this region
+    // Compute tonic signals for this region
     const rLen = r.end - r.start + 1;
     const bassCount = new Float64Array(12);
     for (let t = r.start; t <= r.end; t++) bassCount[slices[t].bassPc]++;
@@ -657,8 +675,8 @@ function buildRegions(
       }
     }
 
-    // Build tonic-boosted scores
-    const boosted = new Float64Array(NUM_CANDIDATES);
+    // Compute raw tonic multiplier per candidate
+    const tonicMult = new Float64Array(NUM_CANDIDATES);
     for (let i = 0; i < NUM_CANDIDATES; i++) {
       const root = CANDIDATE_ROOTS[i];
       let m = 1;
@@ -668,42 +686,47 @@ function buildRegions(
       if (r.start === 0 && slices[0].bassPc === root) m *= 1.3;
       if (r.end === T - 1 && slices[T - 1].bassPc === root) m *= 1.3;
       if (MAJOR_FAMILY_MODES.has(CANDIDATES[i].mode)) m *= 1.1;
-      boosted[i] = rawScores[i] * m;
+      tonicMult[i] = m;
     }
 
-    // Temperature scaling: raise to power then normalize
-    // This makes the distribution sharper — high scores get much higher,
-    // low scores get pushed toward zero.
-    const posterior = new Float64Array(NUM_CANDIDATES);
-    for (let i = 0; i < NUM_CANDIDATES; i++) {
-      posterior[i] = Math.pow(boosted[i], TEMPERATURE);
-    }
-    // Normalize
-    let pSum = 0;
-    for (let i = 0; i < NUM_CANDIDATES; i++) pSum += posterior[i];
-    if (pSum > 0) {
-      for (let i = 0; i < NUM_CANDIDATES; i++) posterior[i] /= pSum;
+    // Normalize tonic multiplier within each PC-set group so max = 1.0
+    // This gives tonicConfidence: "among modes sharing these notes,
+    // how likely is THIS root the actual tonic?"
+    const tonicConf = new Float64Array(NUM_CANDIDATES);
+    for (const group of PC_SET_GROUPS.values()) {
+      let maxMult = 0;
+      for (const idx of group) {
+        if (tonicMult[idx] > maxMult) maxMult = tonicMult[idx];
+      }
+      if (maxMult > 0) {
+        for (const idx of group) tonicConf[idx] = tonicMult[idx] / maxMult;
+      }
     }
 
-    // Build ranked list
-    const ranking: RankedKey[] = [];
+    // Binary probability = fitScore × tonicConfidence
+    // Independent per key, does NOT sum to 100%
+    const probabilities: KeyProbability[] = [];
     for (let i = 0; i < NUM_CANDIDATES; i++) {
-      if (posterior[i] > 0.001) { // skip negligible candidates
-        ranking.push({
+      const fit = fitScoresArr[i];
+      const tc = tonicConf[i];
+      const prob = fit * tc;
+      if (prob > 0.01) { // skip negligible
+        probabilities.push({
           root: CANDIDATES[i].root,
           mode: CANDIDATES[i].mode,
-          confidence: posterior[i],
-          candidateIdx: i,
+          probability: prob,
+          fitScore: fit,
+          tonicConfidence: tc,
         });
       }
     }
-    ranking.sort((a, b) => b.confidence - a.confidence);
+    probabilities.sort((a, b) => b.probability - a.probability);
 
-    const bestKey = ranking.length > 0
-      ? { root: ranking[0].root, mode: ranking[0].mode }
+    const bestKey = probabilities.length > 0
+      ? { root: probabilities[0].root, mode: probabilities[0].mode }
       : { root: 0, mode: 'major' };
-    const bestProb = ranking.length > 0 ? ranking[0].confidence : 0;
-    const secondProb = ranking.length > 1 ? ranking[1].confidence : 0;
+    const bestProb = probabilities.length > 0 ? probabilities[0].probability : 0;
+    const secondProb = probabilities.length > 1 ? probabilities[1].probability : 0;
 
     const segIndices: number[] = [];
     for (let t = r.start; t <= r.end; t++) segIndices.push(t);
@@ -714,10 +737,10 @@ function buildRegions(
       startBar: r.start,
       endBar: r.end,
       type: r.mixed ? 'transition' : 'stable',
-      keyRanking: ranking.slice(0, 10), // top 10 is plenty
+      keyProbabilities: probabilities.slice(0, 10),
       bestKey,
       bestKeyProbability: bestProb,
-      isAmbiguous: bestProb - secondProb < REGION_AMBIGUITY_THRESHOLD,
+      isAmbiguous: bestProb - secondProb < REGION_AMBIGUITY_GAP,
       segmentIndices: segIndices,
     });
   }

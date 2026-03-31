@@ -88,14 +88,15 @@ function printResults(label: string, result: TonalSegmentationResult) {
     const typeTag = region.type === 'transition' ? ' [transition]' : '';
     const ambigTag = region.isAmbiguous ? ' [ambiguous]' : '';
     console.log(`\n    ${barRange}${typeTag}${ambigTag}:`);
-    const top3 = region.keyRanking.slice(0, 3);
+    const top3 = region.keyProbabilities.slice(0, 3);
     for (let i = 0; i < top3.length; i++) {
       const k = top3[i];
       const name = keyName(k.root, k.mode);
-      const pct = (k.confidence * 100).toFixed(1);
-      const bar = '\u2588'.repeat(Math.round(k.confidence * 20)) + '\u2591'.repeat(20 - Math.round(k.confidence * 20));
+      const pct = (k.probability * 100).toFixed(1);
+      const bar = '\u2588'.repeat(Math.round(k.probability * 20)) + '\u2591'.repeat(20 - Math.round(k.probability * 20));
       const marker = i === 0 ? ' <-- best' : '';
-      console.log(`      ${name.padEnd(20)} ${bar} ${pct.padStart(5)}%${marker}`);
+      const detail = `fit=${(k.fitScore * 100).toFixed(0)}% tonic=${(k.tonicConfidence * 100).toFixed(0)}%`;
+      console.log(`      ${name.padEnd(20)} ${bar} ${pct.padStart(5)}% (${detail})${marker}`);
     }
   }
 
