@@ -70,7 +70,13 @@ function printResults(label: string, result: TonalSegmentationResult) {
     });
     const best = candidateName(seg.bestIdx);
     const bestPct = (seg.probs[seg.bestIdx] * 100).toFixed(1);
-    console.log(`  ${barNum}  | ${cells.join(' | ')} | ${best} (${bestPct}%)`);
+    // Certainty bar: [████░░░░░░] style
+    const certBlocks = Math.round(seg.certainty * 10);
+    const certBar = '\u2588'.repeat(certBlocks) + '\u2591'.repeat(10 - certBlocks);
+    const pivotTag = seg.isPivot
+      ? ` PIVOT(${keyName(seg.pivotBetween![0].root, seg.pivotBetween![0].mode)} -> ${keyName(seg.pivotBetween![1].root, seg.pivotBetween![1].mode)})`
+      : '';
+    console.log(`  ${barNum}  | ${cells.join(' | ')} | ${best.padEnd(20)} ${certBar} ${(seg.certainty * 100).toFixed(0).padStart(3)}%${pivotTag}`);
   }
 
   // Regions

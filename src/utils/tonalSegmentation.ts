@@ -24,6 +24,19 @@ export type SegmentResult = {
   probs: number[];
   /** Index of highest-probability candidate */
   bestIdx: number;
+  /**
+   * How "decided" this segment is: 0 = totally ambiguous, 1 = completely certain.
+   * Computed as 1 - (entropy / maxEntropy). High certainty → solid key label,
+   * low certainty → gray transitional zone in the UI.
+   */
+  certainty: number;
+  /**
+   * True if this segment could be a pivot chord: it sits at a boundary
+   * between two different key regions and fits both keys reasonably well.
+   */
+  isPivot: boolean;
+  /** If isPivot, the keys on each side: [before, after]. null otherwise. */
+  pivotBetween: [{ root: number; mode: string }, { root: number; mode: string }] | null;
 };
 
 export type RankedKey = {
@@ -431,20 +444,72 @@ export function analyzeTonalSegments(
   // Step 4: Region-based tonic disambiguation
   applyRegionTonicDisambiguation(posteriors, slices);
 
-  // Build segment results
+  // Build segment results with certainty scores
+  const maxEntropy = Math.log(NUM_CANDIDATES); // entropy of uniform distribution
   const segments: SegmentResult[] = slices.map((slice, t) => {
     const probs = posteriors[t];
     let bestIdx = 0;
     for (let i = 1; i < probs.length; i++) {
       if (probs[i] > probs[bestIdx]) bestIdx = i;
     }
+
+    // Certainty = 1 - normalized entropy
+    // entropy = -Σ p·log(p), normalized to [0,1] by dividing by log(N)
+    let entropy = 0;
+    for (let i = 0; i < NUM_CANDIDATES; i++) {
+      if (probs[i] > 1e-10) entropy -= probs[i] * Math.log(probs[i]);
+    }
+    const certainty = Math.max(0, Math.min(1, 1 - entropy / maxEntropy));
+
     return {
       startTick: slice.startTick,
       endTick: slice.endTick,
       probs,
       bestIdx,
+      certainty,
+      isPivot: false,       // filled in next step
+      pivotBetween: null,
     };
   });
+
+  // Detect pivot chords: segments at key-change boundaries that fit both keys
+  const PIVOT_FIT_THRESHOLD = 0.5; // candidate must have ≥ 50% of best's prob
+  for (let t = 1; t < segments.length; t++) {
+    const prev = segments[t - 1];
+    const curr = segments[t];
+    const prevKey = CANDIDATES[prev.bestIdx];
+    const currKey = CANDIDATES[curr.bestIdx];
+
+    // Different best key from previous segment?
+    if (prev.bestIdx === curr.bestIdx) continue;
+
+    // Check if current segment also fits the previous key reasonably well
+    const currBestProb = curr.probs[curr.bestIdx];
+    const currPrevProb = curr.probs[prev.bestIdx];
+    const fitsOldKey = currPrevProb >= currBestProb * PIVOT_FIT_THRESHOLD;
+
+    // Check if previous segment also fits the current key reasonably well
+    const prevBestProb = prev.probs[prev.bestIdx];
+    const prevCurrProb = prev.probs[curr.bestIdx];
+    const fitsNewKey = prevCurrProb >= prevBestProb * PIVOT_FIT_THRESHOLD;
+
+    if (fitsOldKey) {
+      // Current segment is a pivot: it belongs to the new key but also fits the old
+      curr.isPivot = true;
+      curr.pivotBetween = [
+        { root: prevKey.root, mode: prevKey.mode },
+        { root: currKey.root, mode: currKey.mode },
+      ];
+    }
+    if (fitsNewKey && !curr.isPivot) {
+      // Previous segment is actually the pivot
+      prev.isPivot = true;
+      prev.pivotBetween = [
+        { root: prevKey.root, mode: prevKey.mode },
+        { root: currKey.root, mode: currKey.mode },
+      ];
+    }
+  }
 
   // Step 5: Global ranking + flags
   const globalRanking = computeGlobalRanking(segments);
