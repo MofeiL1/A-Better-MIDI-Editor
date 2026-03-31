@@ -6,6 +6,8 @@ import { VelocityLane } from './VelocityLane';
 import { Ruler, RULER_HEIGHT } from './Ruler';
 import { PlayheadHandle, HANDLE_HEIGHT } from './PlayheadHandle';
 import { ChordTrack } from './ChordTrack';
+import { KeyStrip } from './KeyStrip';
+import { analyzeTonalSegments } from '../../utils/tonalSegmentation';
 import { useProjectStore } from '../../store/projectStore';
 import { useUiStore } from '../../store/uiStore';
 import { usePreviewNote } from '../../hooks/usePreviewNote';
@@ -170,6 +172,17 @@ export const PianoRoll: React.FC = () => {
     () => detectKey(notes, chordsForKeyDetect),
     [notes, chordsForKeyDetect],
   );
+
+  // Tonal segmentation: per-bar key regions with probabilities
+  const tonalResult = useMemo(() => {
+    if (notes.length === 0) return null;
+    const simpleNotes = notes.map((n) => ({
+      pitch: n.pitch,
+      startTick: n.startTick,
+      duration: n.duration,
+    }));
+    return analyzeTonalSegments(simpleNotes, project.ticksPerBeat);
+  }, [notes, project.ticksPerBeat]);
 
   // Drive scaleRoot/scaleMode when auto-detect is on
   useEffect(() => {
@@ -847,6 +860,21 @@ export const PianoRoll: React.FC = () => {
           playheadTick={playheadTick}
           snapTicks={snapTicks}
           onSetPlayhead={handleSetPlayhead}
+        />
+      </div>
+
+      {/* Key Strip row */}
+      <div style={{ display: 'flex' }}>
+        <div style={{ width: PIANO_KEY_WIDTH, flexShrink: 0, backgroundColor: '#1a1a1e', borderRight: '2px solid #555', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <span style={{ fontSize: 8, color: '#666', fontFamily: '-apple-system, "SF Pro Text", sans-serif', letterSpacing: 0.5 }}>KEY</span>
+        </div>
+        <KeyStrip
+          width={gridWidth}
+          height={Math.max(14, pps - 2)}
+          scrollX={scrollX}
+          pixelsPerTick={ppt}
+          regions={tonalResult?.regions ?? []}
+          isAtonal={tonalResult?.isLikelyAtonal ?? false}
         />
       </div>
 

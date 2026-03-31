@@ -674,7 +674,7 @@ export function analyzeTonalSegments(
 function buildRegions(
   segments: SegmentResult[],
   slices: TimeSlice[],
-  sliceWidth: number,
+  _sliceWidth: number,
 ): TonalRegion[] {
   const T = segments.length;
   if (T === 0) return [];
