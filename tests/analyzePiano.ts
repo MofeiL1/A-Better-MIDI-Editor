@@ -76,6 +76,26 @@ analyze('debussy_clair_de_lune.mid', 'Debussy Clair de Lune (Db major)', 12);
 // Known: C# minor, slow movement, clear harmonies
 analyze('schubert_d960_2.mid', 'Schubert Sonata D960 2nd mvt (C# minor)', 12);
 
-// ─── Beethoven Appassionata 2nd mvt ─────────────────────
-// Known: Db major, theme and variations
-analyze('beethoven_pathetique_2.mid', 'Beethoven Appassionata 2nd mvt (Db major)', 12);
+// ─── Beethoven Pathetique 2nd mvt ─────────────────────
+// Known: Ab major, theme and variations
+analyze('beethoven_pathetique_2.mid', 'Beethoven Pathetique 2nd mvt (Ab major)', 12);
+
+// ─── Satie Gymnopedie No.1 ──────────────────────────────
+// Known: D major, very slow 3/4, Gmaj7→Dmaj7 alternation
+analyze('satie_gymnopedie_1.mid', 'Satie Gymnopedie No.1 (D major)', 12);
+
+// ─── Pachelbel Canon in D ───────────────────────────────
+// Known: D major, ground bass D-A-Bm-F#m-G-D-G-A
+analyze('pachelbel_canon.mid', 'Pachelbel Canon in D major', 12);
+
+// ─── Chopin Nocturne Op.9 No.2 ─────────────────────────
+// Known: Eb major, lyrical melody over arpeggiated LH
+analyze('chopin_nocturne_op9_2.mid', 'Chopin Nocturne Op.9 No.2 (Eb major)', 12);
+
+// ─── Beethoven Fur Elise ───────────────────────────────
+// Known: A minor, famous rondo
+analyze('beethoven_fur_elise.mid', 'Beethoven Fur Elise (A minor)', 12);
+
+// ─── Mozart Rondo Alla Turca ────────────────────────────
+// Known: A minor/A major, Turkish March
+analyze('mozart_rondo_alla_turca.mid', 'Mozart Rondo Alla Turca (A minor)', 12);
