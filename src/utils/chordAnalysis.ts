@@ -93,8 +93,10 @@ export function chordComplexityScore(chordName: string): number {
   let typeScore: number;
   if (type === 'major' || type === '' || type === 'minor') {
     typeScore = 0; // triads are simplest
-  } else if (type === '7' || type === 'maj7' || type === 'm7' || type === 'dominant seventh') {
+  } else if (type === '7' || type === 'maj7' || type === 'major seventh' || type === 'm7' || type === 'minor seventh' || type === 'dominant seventh') {
     typeScore = 10; // common 7th chords
+  } else if (type === 'sixth' || type === 'minor sixth') {
+    typeScore = 14; // 6th chords — common but prefer 7ths when both are possible
   } else if (type === 'sus4' || type === 'sus2') {
     typeScore = 15;
   } else if (type === 'dim' || type === 'diminished' || type === 'dim7' || type === 'diminished seventh') {

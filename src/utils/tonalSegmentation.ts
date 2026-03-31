@@ -12,6 +12,7 @@
  */
 
 import { SCALE_PATTERNS } from './music';
+import type { ChordSegment } from './chordBoundary';
 
 // ─── Types ───────────────────────────────────────────────
 
@@ -128,6 +129,46 @@ const NUM_CANDIDATES = CANDIDATES.length; // 72
 const ATONAL_THRESHOLD = 0.04;
 const AMBIGUITY_GAP = 0.015;
 
+// ─── Krumhansl-Schmuckler key profiles ──────────────────
+
+/** KS major key profile (C major reference, rotate for other roots). */
+const KS_MAJOR = [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88];
+/** KS minor key profile (C minor reference, rotate for other roots). */
+const KS_MINOR = [6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17];
+
+/** Pearson correlation between observed PC distribution and KS profile for a given root+mode. */
+function ksCorrelation(pcDist: Float64Array, rootPc: number, mode: string): number {
+  const profile = (mode === 'major' || mode === 'mixolydian') ? KS_MAJOR : KS_MINOR;
+  let sumX = 0, sumY = 0, sumXY = 0, sumX2 = 0, sumY2 = 0;
+  for (let i = 0; i < 12; i++) {
+    const x = pcDist[i];
+    const y = profile[((i - rootPc) % 12 + 12) % 12];
+    sumX += x; sumY += y;
+    sumXY += x * y;
+    sumX2 += x * x; sumY2 += y * y;
+  }
+  const n = 12;
+  const num = n * sumXY - sumX * sumY;
+  const den = Math.sqrt((n * sumX2 - sumX * sumX) * (n * sumY2 - sumY * sumY));
+  return den > 0 ? num / den : 0;
+}
+
+/** Compute duration-weighted PC distribution across multiple slices. */
+function pcDistFromSlices(slices: TimeSlice[], start: number, end: number): Float64Array {
+  const dist = new Float64Array(12);
+  for (let i = start; i <= end; i++) {
+    const s = slices[i];
+    for (const n of s.notes) {
+      const pc = ((n.pitch % 12) + 12) % 12;
+      const effStart = Math.max(n.startTick, s.startTick);
+      const effEnd = Math.min(n.startTick + n.duration, s.endTick);
+      const w = effEnd - effStart;
+      if (w > 0) dist[pc] += w;
+    }
+  }
+  return dist;
+}
+
 // ─── Pre-computed data ───────────────────────────────────
 
 const CANDIDATE_PC_SETS: Set<number>[] = CANDIDATES.map(({ root, mode }) => {
@@ -217,7 +258,38 @@ type TimeSlice = {
   bassPc: number; // pitch class of lowest note
 };
 
-function sliceByTime(notes: SimpleNote[], sliceWidth: number): TimeSlice[] {
+/** Chord quality analysis for a time slice (for functional harmony signals). */
+type SliceChordInfo = {
+  root: number;       // bass pitch class (assumed root)
+  isDom7: boolean;    // major 3rd + minor 7th (V chord quality)
+  isMaj7: boolean;    // major 3rd + major 7th (I/IV chord quality)
+  isMinor: boolean;   // minor 3rd (ii/iii/vi quality)
+};
+
+function analyzeSliceChord(slice: TimeSlice): SliceChordInfo {
+  const bass = slice.bassPc;
+  const intervals = new Set<number>();
+  for (const n of slice.notes) {
+    const pc = ((n.pitch % 12) + 12) % 12;
+    intervals.add(((pc - bass) % 12 + 12) % 12);
+  }
+  const has3 = intervals.has(4);    // major 3rd
+  const hasb3 = intervals.has(3);   // minor 3rd
+  const has7 = intervals.has(11);   // major 7th
+  const hasb7 = intervals.has(10);  // minor 7th
+  return {
+    root: bass,
+    isDom7: has3 && hasb7 && !has7,
+    isMaj7: has3 && has7,
+    isMinor: hasb3 && !has3,
+  };
+}
+
+function sliceByTime(
+  notes: SimpleNote[],
+  sliceWidth: number,
+  chordSegments?: ChordSegment[],
+): TimeSlice[] {
   if (notes.length === 0) return [];
   const maxTick = Math.max(...notes.map((n) => n.startTick + n.duration));
   const numSlices = Math.ceil(maxTick / sliceWidth);
@@ -230,16 +302,53 @@ function sliceByTime(notes: SimpleNote[], sliceWidth: number): TimeSlice[] {
       (n) => n.startTick < end && n.startTick + n.duration > start,
     );
     if (overlapping.length > 0) {
-      const lowestPitch = Math.min(...overlapping.map((n) => n.pitch));
+      // Determine bass PC: prefer structural bass from chord segments
+      let bassPc: number;
+      if (chordSegments) {
+        bassPc = bassFromChordSegments(chordSegments, start, end, overlapping);
+      } else {
+        const lowestPitch = Math.min(...overlapping.map((n) => n.pitch));
+        bassPc = ((lowestPitch % 12) + 12) % 12;
+      }
       slices.push({
         startTick: start,
         endTick: end,
         notes: overlapping,
-        bassPc: ((lowestPitch % 12) + 12) % 12,
+        bassPc,
       });
     }
   }
   return slices;
+}
+
+/**
+ * Determine the bass PC for a time slice from chord segments.
+ *
+ * Strategy: find the chord segment at the bar's downbeat (or earliest onset).
+ * The structural bass from chord boundary detection is perceptually more
+ * accurate than simply taking the lowest pitch of all overlapping notes.
+ */
+function bassFromChordSegments(
+  segments: ChordSegment[],
+  sliceStart: number,
+  sliceEnd: number,
+  fallbackNotes: SimpleNote[],
+): number {
+  // Find the chord segment that contains the slice's start tick (downbeat)
+  for (const seg of segments) {
+    if (seg.startTick <= sliceStart && seg.endTick > sliceStart) {
+      return seg.bassPc;
+    }
+  }
+  // If no segment at downbeat, find the earliest-starting segment in this slice
+  for (const seg of segments) {
+    if (seg.startTick >= sliceStart && seg.startTick < sliceEnd) {
+      return seg.bassPc;
+    }
+  }
+  // Fallback: lowest pitch
+  const lowestPitch = Math.min(...fallbackNotes.map((n) => n.pitch));
+  return ((lowestPitch % 12) + 12) % 12;
 }
 
 // ─── Step 2: Local scoring (pitch class fit only) ────────
@@ -385,16 +494,17 @@ function expandGroupPosteriors(
     new Array(NUM_CANDIDATES).fill(0),
   );
 
+  // ── Pre-compute chord qualities for all slices ──
+  const sliceChords: SliceChordInfo[] = slices.map(s => analyzeSliceChord(s));
+
   // ── Global tonic signals (computed once for the whole piece) ──
-  // In tonal music, the overall key persists unless there's strong local
-  // evidence of modulation. These global signals act as a prior that
-  // stabilizes tonic disambiguation against momentary local fluctuations
-  // (e.g. secondary dominants like A7→Dm being mistaken for V→I in D).
   const globalBassCount = new Float64Array(12);
   for (let t = 0; t < T; t++) globalBassCount[slices[t].bassPc]++;
 
+  // Global V→I: only count when the V chord has dominant 7th quality
   const globalResCount = new Float64Array(NUM_CANDIDATES);
   for (let t = 0; t < T - 1; t++) {
+    if (!sliceChords[t].isDom7) continue; // require dom7 on V chord
     const curBass = slices[t].bassPc;
     const nextBass = slices[t + 1].bassPc;
     for (let i = 0; i < NUM_CANDIDATES; i++) {
@@ -403,6 +513,29 @@ function expandGroupPosteriors(
       }
     }
   }
+
+  // Global chord function evidence (dom7 → target only, with bass-change filter)
+  const dom7Count = sliceChords.filter(c => c.isDom7).length;
+  const dom7Ratio = dom7Count / T;
+  const globalChordEvidence = new Float64Array(12);
+  if (dom7Ratio <= 0.6) {
+    for (let t = 0; t < T; t++) {
+      const cf = sliceChords[t];
+      if (cf.isDom7 && (t === T - 1 || slices[t + 1].bassPc !== cf.root)) {
+        globalChordEvidence[(cf.root + 5) % 12] += 1.0;
+      }
+    }
+  }
+  // End-of-piece resolution boost (stronger for dom7 — clear cadential signal)
+  const lastCf = sliceChords[T - 1];
+  if (lastCf.isDom7) {
+    globalChordEvidence[(lastCf.root + 5) % 12] += 4.0;
+  } else {
+    globalChordEvidence[lastCf.root] += 1.0;
+  }
+  // First bar: the opening chord's root is often the tonic
+  const firstCf = sliceChords[0];
+  globalChordEvidence[firstCf.root] += 1.0;
 
   for (let t = 0; t < T; t++) {
     // Sliding window bounds
@@ -414,14 +547,29 @@ function expandGroupPosteriors(
     const bassCount = new Float64Array(12);
     for (let w = wStart; w <= wEnd; w++) bassCount[slices[w].bassPc]++;
 
-    // Signal 2: V→I resolutions in window
+    // Signal 2: V→I resolutions in window (require dom7 quality on V)
     const resCount = new Float64Array(NUM_CANDIDATES);
     for (let w = wStart; w < wEnd; w++) {
+      if (!sliceChords[w].isDom7) continue;
       const curBass = slices[w].bassPc;
       const nextBass = slices[w + 1].bassPc;
       for (let i = 0; i < NUM_CANDIDATES; i++) {
         if (curBass === CANDIDATE_DOMINANTS[i] && nextBass === CANDIDATE_ROOTS[i]) {
           resCount[i]++;
+        }
+      }
+    }
+
+    // Signal 3: KS profile correlation in window
+    const windowPcDist = pcDistFromSlices(slices, wStart, wEnd);
+
+    // Signal 4: Chord function evidence in window (dom7 → target only)
+    const chordEvidence = new Float64Array(12);
+    if (dom7Ratio <= 0.6) {
+      for (let w = wStart; w <= wEnd; w++) {
+        const cf = sliceChords[w];
+        if (cf.isDom7 && (w === wEnd || slices[w + 1].bassPc !== cf.root)) {
+          chordEvidence[(cf.root + 5) % 12] += 1.0;
         }
       }
     }
@@ -448,9 +596,17 @@ function expandGroupPosteriors(
         const bassRatio = bassCount[root] / wLen;
         m *= 1 + bassRatio * 2.0;
 
-        // Local: V→I resolutions in window (kept mild to avoid
-        // secondary dominants like A7→Dm being mistaken for real V→I)
+        // Local: V→I resolutions in window (requires dom7 on V chord)
         if (resCount[idx] > 0) m *= 1 + resCount[idx] * 0.3;
+
+        // Local: Chord function evidence (dom7→target, maj7→root)
+        const cfLocal = chordEvidence[root];
+        if (cfLocal > 0) m *= 1 + (cfLocal / wLen) * 4.0;
+
+        // Local: KS profile correlation — which root/mode best explains
+        // the actual pitch class distribution in the window
+        const ks = ksCorrelation(windowPcDist, root, CANDIDATES[idx].mode);
+        m *= 1 + Math.max(0, ks) * 2.0;
 
         // Global: Bass frequency across entire piece (gentle stabilizing prior)
         // Kept mild to avoid overriding real modulations (e.g. C→G)
@@ -459,6 +615,10 @@ function expandGroupPosteriors(
 
         // Global: V→I resolutions across entire piece
         if (globalResCount[idx] > 0) m *= 1 + globalResCount[idx] * 0.15;
+
+        // Global: Chord function evidence (dom7→target + end-of-piece + first-bar)
+        const cfGlobal = globalChordEvidence[root];
+        if (cfGlobal > 0) m *= 1 + (cfGlobal / T) * 3.0;
 
         // Home key bias: pieces almost always start in their home key.
         // Apply a mild global boost for the first bar's bass note.
@@ -512,11 +672,17 @@ function computeGlobalRanking(
   for (let g = 0; g < NUM_GROUPS; g++) avgGroupProb[g] /= T;
 
   // Average expanded posteriors for within-group candidate ranking
+  // Weight edge bars (first/last 2) more heavily — opening and closing
+  // establish the home key in most music
   const avgCandProb = new Float64Array(NUM_CANDIDATES);
+  let totalWeight = 0;
   for (let t = 0; t < T; t++) {
-    for (let i = 0; i < NUM_CANDIDATES; i++) avgCandProb[i] += expandedPosteriors[t][i];
+    let w = 1.0;
+    if (t <= 1 || t >= T - 2) w = 5.0;
+    totalWeight += w;
+    for (let i = 0; i < NUM_CANDIDATES; i++) avgCandProb[i] += expandedPosteriors[t][i] * w;
   }
-  for (let i = 0; i < NUM_CANDIDATES; i++) avgCandProb[i] /= T;
+  for (let i = 0; i < NUM_CANDIDATES; i++) avgCandProb[i] /= totalWeight;
 
   // For each group, pick the best candidate and assign group-level confidence
   const ranked: RankedKey[] = [];
@@ -544,6 +710,10 @@ export interface TonalSegmentationOptions {
   transitionSharpness?: number;
   atonalThreshold?: number;
   ambiguityGap?: number;
+  /** Pre-computed chord segments from detectChordBoundaries().
+   *  When provided, uses structural bass from chord segments for more
+   *  accurate bass PC tracking (handles arpeggios, walking bass, etc.). */
+  chordSegments?: ChordSegment[];
 }
 
 export function analyzeTonalSegments(
@@ -555,8 +725,9 @@ export function analyzeTonalSegments(
   const transitionSharpness = options.transitionSharpness ?? 12;
   const atonalThreshold = options.atonalThreshold ?? ATONAL_THRESHOLD;
   const ambiguityGap = options.ambiguityGap ?? AMBIGUITY_GAP;
+  const chordSegments = options.chordSegments;
 
-  const slices = sliceByTime(notes, sliceWidth);
+  const slices = sliceByTime(notes, sliceWidth, chordSegments);
   const T = slices.length;
 
   if (T === 0) {
@@ -829,8 +1000,14 @@ function buildRegions(
     const bassCount = new Float64Array(12);
     for (let t = r.start; t <= r.end; t++) bassCount[slices[t].bassPc]++;
 
+    // Pre-compute chord qualities for this region's slices
+    const regionChords: SliceChordInfo[] = [];
+    for (let t = r.start; t <= r.end; t++) regionChords.push(analyzeSliceChord(slices[t]));
+
+    // V→I resolutions (require dom7 on V chord)
     const resCount = new Float64Array(NUM_CANDIDATES);
     for (let t = r.start; t < r.end; t++) {
+      if (!regionChords[t - r.start].isDom7) continue;
       const curBass = slices[t].bassPc;
       const nextBass = slices[t + 1].bassPc;
       for (let i = 0; i < NUM_CANDIDATES; i++) {
@@ -840,6 +1017,32 @@ function buildRegions(
       }
     }
 
+    // Chord function evidence for this region (dom7 → target only, with bass-change filter)
+    const regionDom7Count = regionChords.filter(c => c.isDom7).length;
+    const regionDom7Ratio = regionDom7Count / rLen;
+    const regionChordEvidence = new Float64Array(12);
+    if (regionDom7Ratio <= 0.6) {
+      for (let ti = 0; ti < regionChords.length; ti++) {
+        const cf = regionChords[ti];
+        const absT = r.start + ti;
+        if (cf.isDom7 && (absT === r.end || slices[absT + 1].bassPc !== cf.root)) {
+          regionChordEvidence[(cf.root + 5) % 12] += 1.0;
+        }
+      }
+    }
+    // End-of-piece resolution boost for last region
+    if (r.end === T - 1) {
+      const lastRegionCf = regionChords[regionChords.length - 1];
+      if (lastRegionCf.isDom7) {
+        regionChordEvidence[(lastRegionCf.root + 5) % 12] += 2.0;
+      } else {
+        regionChordEvidence[lastRegionCf.root] += 2.0;
+      }
+    }
+
+    // KS profile correlation for this region's pooled notes
+    const regionPcDist = pcDistFromSlices(slices, r.start, r.end);
+
     // Compute raw tonic multiplier per candidate
     const tonicMult = new Float64Array(NUM_CANDIDATES);
     for (let i = 0; i < NUM_CANDIDATES; i++) {
@@ -848,6 +1051,12 @@ function buildRegions(
       const bassRatio = bassCount[root] / rLen;
       m *= 1 + bassRatio * 2.0;
       if (resCount[i] > 0) m *= 1 + resCount[i] * 0.8;
+      // Chord function evidence
+      const cfEv = regionChordEvidence[root];
+      if (cfEv > 0) m *= 1 + (cfEv / rLen) * 4.0;
+      // KS profile correlation
+      const ks = ksCorrelation(regionPcDist, root, CANDIDATES[i].mode);
+      m *= 1 + Math.max(0, ks) * 2.0;
       if (r.start === 0 && slices[0].bassPc === root) m *= 1.3;
       if (r.end === T - 1 && slices[T - 1].bassPc === root) m *= 1.3;
       if (MAJOR_FAMILY_MODES.has(CANDIDATES[i].mode)) m *= 1.2;

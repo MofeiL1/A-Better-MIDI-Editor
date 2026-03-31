@@ -1,8 +1,8 @@
 /**
- * Overlap-based chord detection for the Chord Track.
+ * Chord detection for the Chord Track.
  *
- * Unlike chordAnalysis.ts (per-measure, for note badges), this module
- * groups notes by temporal overlap and detects chords from each group.
+ * Uses the perceptual chord boundary algorithm (chordBoundary.ts) to segment
+ * notes into chord regions, then names each chord using tonal.js disambiguation.
  *
  * Reuses the chord disambiguation system from chordAnalysis.ts:
  * detectWithFallback, pickBestChord, chordComplexityScore.
@@ -14,19 +14,20 @@ import type { ChordEvent } from '../types/model';
 import {
   PITCH_CLASS_NAMES,
   detectWithFallback,
-  chordHas7th,
+  chordComplexityScore,
   getChordToneLabel,
   chordToRomanNumeral,
 } from './chordAnalysis';
 import { generateId } from './id';
+import { detectChordBoundaries, type ChordSegment } from './chordBoundary';
 
 // ─── Chord symbol extraction ──────────────────────────────
 
 /**
  * Extract chord quality suffix directly from a tonal.js chord name,
- * then apply jazz notation polish (° for dim, ø for half-dim).
+ * then apply jazz notation polish.
  *
- * e.g. "Cmaj7" → "maj7", "D#m7b5" → "ø7", "Bdim7" → "°7", "G7" → "7"
+ * e.g. "Cmaj7" -> "maj7", "D#m7b5" -> "m7b5", "Bdim7" -> "dim7", "G7" -> "7"
  */
 function extractQualityFromName(chordName: string, root: string): string {
   // chordName might contain a slash for inversions: "Cmaj7/E"
@@ -39,168 +40,161 @@ function extractQualityFromName(chordName: string, root: string): string {
   return q;
 }
 
-// ─── Note grouping by temporal overlap ─────────────────────
+// ─── Helper: analyze chord from a ChordSegment ─────────────
 
-type NoteGroup = {
-  notes: Note[];
-  startTick: number;
-  endTick: number;
+type SegmentChordResult = {
+  root: string;
+  rootPc: number;
+  quality: string;
+  bass: number | undefined;
 };
 
 /**
- * Group notes by temporal overlap.
+ * Analyze a ChordSegment to determine chord name, root, quality, and bass.
+ * Returns null if the segment can't be identified as a chord.
  *
- * Two notes are in the same chord group if their temporal overlap
- * is >= overlapThreshold of the shorter note's duration.
- *
- * On-beat / off-beat weighting:
- * - Notes starting on a beat boundary: always included (even if short)
- * - Notes starting off-beat: only included if they sustain to the next beat
+ * When the full PC set gives a non-bass-rooted chord (common when melody
+ * notes contaminate the harmony), tries dropping PCs to find a simpler
+ * bass-rooted interpretation. E.g., {C,E,G,A,B} with bass C → Am9/C,
+ * but dropping A gives {C,E,G,B} → Cmaj7 (bass-rooted, preferred).
  */
-function groupNotesByOverlap(
-  notes: Note[],
-  ticksPerBeat: number,
-  overlapThreshold = 0.5,
-): NoteGroup[] {
-  if (notes.length === 0) return [];
+function analyzeChordSegment(seg: ChordSegment): SegmentChordResult | null {
+  // Sort PCs by weight descending so we can prioritize dropping low-weight PCs
+  const sortedPcs = [...seg.pcs]
+    .map(pc => ({ pc, weight: seg.pcWeights[pc] }))
+    .sort((a, b) => b.weight - a.weight);
 
-  // Sort by startTick, then by pitch (low to high)
-  const sorted = [...notes].sort((a, b) => a.startTick - b.startTick || a.pitch - b.pitch);
+  const pitchClasses = sortedPcs.map(p => PITCH_CLASS_NAMES[p.pc]);
+  if (pitchClasses.length < 2) return null;
 
-  // Filter: off-beat notes must sustain to next beat
-  const filtered = sorted.filter((note) => {
-    const isOnBeat = note.startTick % ticksPerBeat === 0;
-    if (isOnBeat) return true; // on-beat: always include, even if staccato
+  const bassName = PITCH_CLASS_NAMES[seg.bassPc];
 
-    // off-beat: must sustain to the next beat
-    const nextBeat = (Math.floor(note.startTick / ticksPerBeat) + 1) * ticksPerBeat;
-    const noteEnd = note.startTick + note.duration;
-    return noteEnd >= nextBeat;
-  });
+  // Try full set first
+  let result = detectWithFallback(pitchClasses, bassName);
+  let chordName = result.chordName;
+  if (!chordName) return null;
 
-  if (filtered.length === 0) return [];
+  // If detected root != bass and we have enough PCs, try dropping
+  // low-weight non-bass PCs to find a bass-rooted chord.
+  // This removes melody/passing tones that confuse the harmony.
+  let parsed = Chord.get(chordName);
+  if (parsed.tonic && parsed.tonic !== bassName && pitchClasses.length > 3) {
+    let bestBassRootedName: string | null = null;
+    let bestScore = Infinity;
 
-  // Greedy grouping: for each note, try to merge into the current group
-  const groups: NoteGroup[] = [];
-  let current: NoteGroup = {
-    notes: [filtered[0]],
-    startTick: filtered[0].startTick,
-    endTick: filtered[0].startTick + filtered[0].duration,
-  };
+    // Try dropping each non-bass PC, starting from lowest weight
+    for (let i = pitchClasses.length - 1; i >= 0; i--) {
+      if (pitchClasses[i] === bassName) continue;
+      const subset = pitchClasses.filter((_, idx) => idx !== i);
+      if (subset.length < 2) continue;
+      const sub = detectWithFallback(subset, bassName);
+      if (sub.chordName) {
+        const subParsed = Chord.get(sub.chordName);
+        if (subParsed.tonic === bassName) {
+          const score = chordComplexityScore(sub.chordName);
+          if (score < bestScore) {
+            bestBassRootedName = sub.chordName;
+            bestScore = score;
+          }
+        }
+      }
+    }
 
-  for (let i = 1; i < filtered.length; i++) {
-    const note = filtered[i];
-    const noteEnd = note.startTick + note.duration;
-
-    // Compute overlap with the current group's time range
-    const overlapStart = Math.max(note.startTick, current.startTick);
-    const overlapEnd = Math.min(noteEnd, current.endTick);
-    const overlap = Math.max(0, overlapEnd - overlapStart);
-    const shorterDuration = Math.min(note.duration, current.endTick - current.startTick);
-
-    if (shorterDuration > 0 && overlap / shorterDuration >= overlapThreshold) {
-      // Merge into current group
-      current.notes.push(note);
-      current.startTick = Math.min(current.startTick, note.startTick);
-      current.endTick = Math.max(current.endTick, noteEnd);
-    } else {
-      // Start new group
-      groups.push(current);
-      current = {
-        notes: [note],
-        startTick: note.startTick,
-        endTick: noteEnd,
-      };
+    if (bestBassRootedName) {
+      chordName = bestBassRootedName;
+      parsed = Chord.get(chordName);
     }
   }
-  groups.push(current);
 
-  return groups;
+  let root = parsed.tonic ?? null;
+  let chordType = parsed.type ?? null;
+  let bass: number | undefined;
+
+  if (!root) return null;
+
+  // Handle m#5 reinterpretation (same logic as chordAnalysis.ts)
+  if (chordType && (chordType.toLowerCase().includes('m#5') || chordType.toLowerCase() === 'augmented minor')) {
+    const rootIdx = PITCH_CLASS_NAMES.indexOf(root);
+    if (rootIdx >= 0) {
+      const majorRoot = PITCH_CLASS_NAMES[(rootIdx + 8) % 12];
+      bass = rootIdx;
+      root = majorRoot;
+      chordType = 'major';
+    }
+  }
+
+  const rootPc = PITCH_CLASS_NAMES.indexOf(root);
+  if (rootPc < 0) return null;
+
+  // Determine bass for slash chords
+  if (bass === undefined && bassName !== root) {
+    bass = PITCH_CLASS_NAMES.indexOf(bassName);
+    if (bass < 0) bass = undefined;
+  }
+
+  const quality = extractQualityFromName(chordName, root);
+
+  return { root, rootPc, quality, bass };
 }
 
-// ─── Chord detection from note groups ─────────────────────
+/**
+ * Check if a chord segment contains a 7th relative to the given root PC.
+ * Uses the segment's pitch class set directly (no need for actual pitches).
+ */
+function segmentHas7th(seg: ChordSegment, rootPc: number): boolean {
+  return seg.pcs.has((rootPc + 10) % 12) || seg.pcs.has((rootPc + 11) % 12);
+}
+
+// ─── Chord detection from chord boundary segments ───────────
 
 /**
- * Detect chords from notes using temporal overlap grouping.
+ * Detect chords from notes using perceptual chord boundary detection.
  *
  * Returns detected ChordEvents (source: 'detected') with memberNoteIds.
- * Only groups with >= 2 unique pitch classes produce a chord.
  */
 export function detectChordsFromNotes(
   notes: Note[],
   ticksPerBeat: number,
 ): ChordEvent[] {
-  const groups = groupNotesByOverlap(notes, ticksPerBeat);
+  const simpleNotes = notes.map(n => ({
+    pitch: n.pitch,
+    startTick: n.startTick,
+    duration: n.duration,
+  }));
+
+  const segments = detectChordBoundaries(simpleNotes, ticksPerBeat);
   const results: ChordEvent[] = [];
 
-  for (const group of groups) {
-    // Unique pitch classes
-    const pitchClasses = [
-      ...new Set(group.notes.map((n) => PITCH_CLASS_NAMES[((n.pitch % 12) + 12) % 12])),
-    ];
+  for (const seg of segments) {
+    const chordInfo = analyzeChordSegment(seg);
+    if (!chordInfo) continue;
 
-    // Need at least 2 different pitch classes for a chord
-    if (pitchClasses.length < 2) continue;
+    const { root, rootPc, quality, bass } = chordInfo;
+    const has7th = segmentHas7th(seg, rootPc);
 
-    // Find bass note (lowest pitch)
-    const bassNote = group.notes.reduce((low, n) => (n.pitch < low.pitch ? n : low), group.notes[0]);
-    const bassName = PITCH_CLASS_NAMES[((bassNote.pitch % 12) + 12) % 12];
-
-    // Detect chord using existing disambiguation system
-    const { chordName } = detectWithFallback(pitchClasses, bassName);
-    if (!chordName) continue;
-
-    const parsed = Chord.get(chordName);
-    let root = parsed.tonic ?? null;
-    let chordType = parsed.type ?? null;
-    let bass: number | undefined;
-
-    if (!root) continue;
-
-    // Handle m#5 reinterpretation (same logic as chordAnalysis.ts)
-    if (chordType && (chordType.toLowerCase().includes('m#5') || chordType.toLowerCase() === 'augmented minor')) {
-      const rootIdx = PITCH_CLASS_NAMES.indexOf(root);
-      if (rootIdx >= 0) {
-        const majorRoot = PITCH_CLASS_NAMES[(rootIdx + 8) % 12];
-        bass = rootIdx;
-        root = majorRoot;
-        chordType = 'major';
-      }
-    }
-
-    const rootPc = PITCH_CLASS_NAMES.indexOf(root);
-    if (rootPc < 0) continue;
-
-    // Determine bass for slash chords
-    if (bass === undefined && bassName !== root) {
-      bass = PITCH_CLASS_NAMES.indexOf(bassName);
-      if (bass < 0) bass = undefined;
-    }
-
-    // Extract quality suffix directly from tonal.js chord name
-    // e.g. "Cmaj7" → "maj7", "Dm7b5" → "ø7" (with jazz symbols)
-    const quality = extractQualityFromName(chordName, root);
-
-    // Label member notes with chord tones
-    const has7th = chordHas7th(group.notes.map((n) => n.pitch), root);
+    // Find member notes (notes overlapping this segment)
     const memberNoteIds: string[] = [];
-    for (const note of group.notes) {
-      const label = getChordToneLabel(note.pitch, root, has7th);
-      // Include notes that have a meaningful chord function (not '?')
-      if (label !== '?') {
-        memberNoteIds.push(note.id);
+    let segNoteCount = 0;
+    for (const note of notes) {
+      const noteEnd = note.startTick + note.duration;
+      if (note.startTick < seg.endTick && noteEnd > seg.startTick) {
+        segNoteCount++;
+        const label = getChordToneLabel(note.pitch, root, has7th);
+        if (label !== '?') {
+          memberNoteIds.push(note.id);
+        }
       }
     }
 
     results.push({
       id: generateId(),
-      startTick: group.startTick,
-      endTick: group.endTick,
+      startTick: seg.startTick,
+      endTick: seg.endTick,
       root: rootPc,
       quality,
       bass,
       source: 'detected',
-      confidence: memberNoteIds.length / group.notes.length,
+      confidence: segNoteCount > 0 ? memberNoteIds.length / segNoteCount : 0,
       memberNoteIds,
     });
   }
@@ -208,11 +202,10 @@ export function detectChordsFromNotes(
   return results;
 }
 
-// ─── Chord tone map from overlap groups ───────────────────
+// ─── Chord tone map from chord boundary segments ────────────
 
 /**
- * Build a noteId -> chord tone label map using overlap-based grouping.
- * Replaces the per-measure buildChordToneMap for more accurate labeling.
+ * Build a noteId -> chord tone label map using chord boundary detection.
  *
  * When draggingNoteId is provided, that note is excluded from detection
  * but still labeled against the chord detected from the other notes.
@@ -226,61 +219,42 @@ export function buildOverlapChordToneMap(
     ? notes.filter((n) => n.id !== draggingNoteId)
     : notes;
 
-  const groups = groupNotesByOverlap(stableNotes, ticksPerBeat);
+  const simpleNotes = stableNotes.map(n => ({
+    pitch: n.pitch,
+    startTick: n.startTick,
+    duration: n.duration,
+  }));
+
+  const segments = detectChordBoundaries(simpleNotes, ticksPerBeat);
   const map = new Map<string, string>();
 
-  for (const group of groups) {
-    const pitchClasses = [
-      ...new Set(group.notes.map((n) => PITCH_CLASS_NAMES[((n.pitch % 12) + 12) % 12])),
-    ];
-    if (pitchClasses.length < 2) continue;
+  // For each segment, detect chord and label overlapping notes
+  for (const seg of segments) {
+    const chordInfo = analyzeChordSegment(seg);
+    if (!chordInfo) continue;
 
-    const bassNote = group.notes.reduce((low, n) => (n.pitch < low.pitch ? n : low), group.notes[0]);
-    const bassName = PITCH_CLASS_NAMES[((bassNote.pitch % 12) + 12) % 12];
-    const { chordName } = detectWithFallback(pitchClasses, bassName);
-    if (!chordName) continue;
+    const { root, rootPc } = chordInfo;
+    const has7th = segmentHas7th(seg, rootPc);
 
-    const parsed = Chord.get(chordName);
-    let root = parsed.tonic ?? null;
-    const chordType = parsed.type ?? null;
-    if (!root) continue;
-
-    if (chordType && (chordType.toLowerCase().includes('m#5') || chordType.toLowerCase() === 'augmented minor')) {
-      const rootIdx = PITCH_CLASS_NAMES.indexOf(root);
-      if (rootIdx >= 0) root = PITCH_CLASS_NAMES[(rootIdx + 8) % 12];
-    }
-
-    const has7th = chordHas7th(group.notes.map((n) => n.pitch), root);
-    for (const note of group.notes) {
-      map.set(note.id, getChordToneLabel(note.pitch, root, has7th));
+    for (const note of stableNotes) {
+      const noteEnd = note.startTick + note.duration;
+      if (note.startTick < seg.endTick && noteEnd > seg.startTick) {
+        map.set(note.id, getChordToneLabel(note.pitch, root, has7th));
+      }
     }
   }
 
-  // Label dragging note against its overlapping group
+  // Label dragging note against its overlapping segment's chord
   if (draggingNoteId) {
     const draggingNote = notes.find((n) => n.id === draggingNoteId);
     if (draggingNote) {
-      // Find which group overlaps this note's time
-      for (const group of groups) {
-        if (draggingNote.startTick < group.endTick &&
-            draggingNote.startTick + draggingNote.duration > group.startTick) {
-          const pitchClasses = [
-            ...new Set(group.notes.map((n) => PITCH_CLASS_NAMES[((n.pitch % 12) + 12) % 12])),
-          ];
-          if (pitchClasses.length < 2) break;
-          const bassNote = group.notes.reduce((low, n) => (n.pitch < low.pitch ? n : low), group.notes[0]);
-          const bassName = PITCH_CLASS_NAMES[((bassNote.pitch % 12) + 12) % 12];
-          const { chordName } = detectWithFallback(pitchClasses, bassName);
-          if (!chordName) break;
-          const parsed = Chord.get(chordName);
-          let root = parsed.tonic ?? null;
-          const chordType = parsed.type ?? null;
-          if (!root) break;
-          if (chordType && (chordType.toLowerCase().includes('m#5') || chordType.toLowerCase() === 'augmented minor')) {
-            const rootIdx = PITCH_CLASS_NAMES.indexOf(root);
-            if (rootIdx >= 0) root = PITCH_CLASS_NAMES[(rootIdx + 8) % 12];
-          }
-          const has7th = chordHas7th(group.notes.map((n) => n.pitch), root);
+      for (const seg of segments) {
+        if (draggingNote.startTick < seg.endTick &&
+            draggingNote.startTick + draggingNote.duration > seg.startTick) {
+          const chordInfo = analyzeChordSegment(seg);
+          if (!chordInfo) break;
+          const { root, rootPc } = chordInfo;
+          const has7th = segmentHas7th(seg, rootPc);
           map.set(draggingNoteId, getChordToneLabel(draggingNote.pitch, root, has7th));
           break;
         }
@@ -296,15 +270,13 @@ export function buildOverlapChordToneMap(
 import type { ChordInfo } from './chordAnalysis';
 
 /**
- * Convert overlap-based ChordEvents to ChordInfo[] for key detection.
+ * Convert pre-detected ChordEvents to ChordInfo[] for key detection.
  * Key detection only needs root (string) and chordType fields.
  */
 export function toChordInfoForKeyDetect(
-  notes: Note[],
-  ticksPerBeat: number,
+  chords: ChordEvent[],
 ): ChordInfo[] {
-  const detected = detectChordsFromNotes(notes, ticksPerBeat);
-  return detected.map((c) => ({
+  return chords.map((c) => ({
     measure: 0,
     startTick: c.startTick,
     endTick: c.endTick,
@@ -325,18 +297,15 @@ export type ChordLabel = {
 };
 
 /**
- * Build chord display labels from overlap-based detection.
- * Each label has a startTick position (where the label should appear),
- * a chord name, and a Roman numeral.
+ * Build chord display labels from pre-detected ChordEvents.
+ * Each label has a startTick position, a chord name, and a Roman numeral.
  */
 export function buildChordLabels(
-  notes: Note[],
-  ticksPerBeat: number,
+  chords: ChordEvent[],
   scaleRoot: number,
   regions?: { startTick: number; endTick: number; bestKey: { root: number } }[],
 ): ChordLabel[] {
-  const detected = detectChordsFromNotes(notes, ticksPerBeat);
-  return detected.map((c) => {
+  return chords.map((c) => {
     const rootName = PITCH_CLASS_NAMES[c.root];
     const bassStr = c.bass !== undefined ? '/' + PITCH_CLASS_NAMES[c.bass] : '';
     const name = rootName + c.quality + bassStr;
