@@ -62,9 +62,19 @@ export const VelocityLane: React.FC<VelocityLaneProps> = ({
   // Body hit test: any point on a bar's visible area, respecting draw order.
   // Reverse-iterate the draw order so visually topmost bar wins.
   const hitTestBarBody = useCallback((mx: number, my: number): Note | null => {
-    const sorted = [...notes].sort(
-      (a, b) => a.startTick - b.startTick || b.velocity - a.velocity || a.pitch - b.pitch
-    );
+    const activeId = useUiStore.getState().velocityDragNoteId || useUiStore.getState().hoveredNoteId;
+    const sorted = [...notes].sort((a, b) => {
+      if (a.startTick !== b.startTick) return a.startTick - b.startTick;
+      if (a.velocity === b.velocity) {
+        const hovA = a.id === activeId ? 1 : 0;
+        const hovB = b.id === activeId ? 1 : 0;
+        if (hovA !== hovB) return hovA - hovB;
+        const selA = selectedNoteIds.has(a.id) ? 1 : 0;
+        const selB = selectedNoteIds.has(b.id) ? 1 : 0;
+        if (selA !== selB) return selA - selB;
+      }
+      return b.velocity - a.velocity || a.pitch - b.pitch;
+    });
     for (let i = sorted.length - 1; i >= 0; i--) {
       const note = sorted[i];
       const x = barX(note);
@@ -74,7 +84,7 @@ export const VelocityLane: React.FC<VelocityLaneProps> = ({
       if (my >= topY && my <= height) return note;
     }
     return null;
-  }, [notes, barX, barTopY, pixelsPerTick, height]);
+  }, [notes, selectedNoteIds, barX, barTopY, pixelsPerTick, height]);
 
   // Grab zone hit test: only the visually front bar's grab zone is accessible.
   const hitTestVelocityBar = useCallback((mx: number, my: number): Note | null => {
@@ -117,11 +127,26 @@ export const VelocityLane: React.FC<VelocityLaneProps> = ({
     const minVisibleTick = scrollX;
     const maxVisibleTick = scrollX + width / pixelsPerTick;
 
-    // Sort by velocity descending: highest velocity drawn first (background),
-    // lowest velocity drawn last (foreground). This ensures no bar is ever hidden.
+    // Sort: highest velocity drawn first (background), lowest last (foreground).
+    // Hovered/selected notes promoted above close-velocity neighbors (within threshold)
+    // but still below notes with genuinely lower velocity.
+    const activeId = velocityDragNoteId || hoveredNoteId;
     const sortedNotes = [...notes]
       .filter((n) => n.startTick + n.duration >= minVisibleTick && n.startTick <= maxVisibleTick)
-      .sort((a, b) => a.startTick - b.startTick || b.velocity - a.velocity || a.pitch - b.pitch);
+      .sort((a, b) => {
+        if (a.startTick !== b.startTick) return a.startTick - b.startTick;
+        if (a.velocity === b.velocity) {
+          // Hovered/dragged note on top of same-velocity neighbors
+          const hovA = a.id === activeId ? 1 : 0;
+          const hovB = b.id === activeId ? 1 : 0;
+          if (hovA !== hovB) return hovA - hovB;
+          // Selected notes on top of same-velocity unselected neighbors
+          const selA = selectedNoteIds.has(a.id) ? 1 : 0;
+          const selB = selectedNoteIds.has(b.id) ? 1 : 0;
+          if (selA !== selB) return selA - selB;
+        }
+        return b.velocity - a.velocity || a.pitch - b.pitch;
+      });
 
     const activeHighlightId = velocityDragNoteId || hoveredNoteId;
 

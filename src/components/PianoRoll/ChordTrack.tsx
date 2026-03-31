@@ -27,7 +27,7 @@ function chordDisplayName(chord: ChordEvent): string {
   return rootName + chord.quality + bassStr;
 }
 
-type HoverInfo = { chordId: string; edge: 'start' | 'end' } | null;
+type HoverInfo = { chordId: string; edge: 'start' | 'end' | 'body' } | null;
 
 type DragState = {
   type: 'none';
@@ -155,16 +155,6 @@ export const ChordTrack: React.FC<ChordTrackProps> = ({
     [chords, scrollX, pixelsPerTick],
   );
 
-  const handleMouseMove = useCallback(
-    (e: React.MouseEvent) => {
-      if (dragState.current.type !== 'none') return;
-      const hit = hitTest(e.clientX);
-      setCursor(hit ? 'ew-resize' : 'default');
-      setHover(hit ? { chordId: hit.chord.id, edge: hit.edge } : null);
-    },
-    [hitTest],
-  );
-
   // Body hit test: is mouse inside any chord (not on edge)?
   const bodyHitTest = useCallback(
     (clientX: number): ChordEvent | null => {
@@ -180,6 +170,22 @@ export const ChordTrack: React.FC<ChordTrackProps> = ({
       return null;
     },
     [chords, scrollX, pixelsPerTick],
+  );
+
+  const handleMouseMove = useCallback(
+    (e: React.MouseEvent) => {
+      if (dragState.current.type !== 'none') return;
+      const hit = hitTest(e.clientX);
+      if (hit) {
+        setCursor('ew-resize');
+        setHover({ chordId: hit.chord.id, edge: hit.edge });
+      } else {
+        const body = bodyHitTest(e.clientX);
+        setCursor('default');
+        setHover(body ? { chordId: body.id, edge: 'body' } : null);
+      }
+    },
+    [hitTest, bodyHitTest],
   );
 
   const handleMouseDown = useCallback(

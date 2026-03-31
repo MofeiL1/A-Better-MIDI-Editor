@@ -5,27 +5,48 @@ import { useUiStore } from '../store/uiStore';
 import { tickToSeconds } from '../utils/timing';
 import { getPianoSampler, getSamplerSync } from '../audio/pianoSampler';
 
+// Module-level state: shared across all usePlayback() instances
+let animFrame = 0;
+let startTick = 0;
+let playGeneration = 0; // incremented on each stop, lets async play() detect cancellation
+
+function forceStop() {
+  playGeneration++;
+  Tone.getTransport().stop();
+  Tone.getTransport().cancel();
+  cancelAnimationFrame(animFrame);
+  const sampler = getSamplerSync();
+  if (sampler) sampler.releaseAll();
+  useUiStore.getState().setIsPlaying(false);
+}
+
 export function usePlayback() {
-  const animRef = useRef<number>(0);
-  const startTickRef = useRef(0);
-  const isPlayingRef = useRef(false);
+  // Keep a local ref to clean up animation on unmount
+  const mountedRef = useRef(true);
+
+  const stop = useCallback(() => {
+    forceStop();
+  }, []);
 
   const play = useCallback(async () => {
-    if (isPlayingRef.current) return; // guard against double-entry during async init
-    isPlayingRef.current = true;
+    // If already playing, stop first
+    if (useUiStore.getState().isPlaying) {
+      forceStop();
+    }
+
+    const gen = ++playGeneration; // claim a generation
 
     await Tone.start();
+    if (gen !== playGeneration) return; // cancelled during await
 
     const { project } = useProjectStore.getState();
     const { activeClipId, playheadTick, setIsPlaying, setPlayheadTick, audioLatency } = useUiStore.getState();
 
     const clip = project.tracks.flatMap((t) => t.clips).find((c) => c.id === activeClipId);
-    if (!clip || clip.notes.length === 0) {
-      isPlayingRef.current = false;
-      return;
-    }
+    if (!clip || clip.notes.length === 0) return;
 
     const sampler = await getPianoSampler();
+    if (gen !== playGeneration) return; // cancelled during await
 
     const ctx = Tone.getContext();
     ctx.lookAhead = audioLatency;
@@ -40,7 +61,7 @@ export function usePlayback() {
     transport.bpm.value = bpm;
     transport.position = 0;
 
-    startTickRef.current = playheadTick;
+    startTick = playheadTick;
     const startOffset = tickToSeconds(playheadTick, bpm, tpb);
 
     for (const note of clip.notes) {
@@ -51,9 +72,6 @@ export function usePlayback() {
       const noteName = Tone.Frequency(note.pitch, 'midi').toNote();
       const vel = Math.max(0.01, note.velocity / 127);
 
-      // Attack and Release scheduled separately so:
-      // - transport.cancel() can cancel future releases
-      // - releaseAll() can find active notes in _activeSources
       transport.schedule((time) => {
         sampler.triggerAttack(noteName, time, vel);
       }, noteStartSec);
@@ -67,28 +85,17 @@ export function usePlayback() {
 
     const startTime = Tone.now();
     const tick = () => {
-      if (!isPlayingRef.current) return;
+      if (gen !== playGeneration) return; // stop was called
       const elapsed = Tone.now() - startTime;
-      const currentTick = startTickRef.current + (elapsed / 60) * bpm * tpb;
+      const currentTick = startTick + (elapsed / 60) * bpm * tpb;
       setPlayheadTick(Math.round(currentTick));
-      animRef.current = requestAnimationFrame(tick);
+      animFrame = requestAnimationFrame(tick);
     };
-    animRef.current = requestAnimationFrame(tick);
-  }, []);
-
-  const stop = useCallback(() => {
-    isPlayingRef.current = false;
-    Tone.getTransport().stop();
-    Tone.getTransport().cancel();
-    cancelAnimationFrame(animRef.current);
-    // MIDI Note Off: release all voices with natural decay
-    const sampler = getSamplerSync();
-    if (sampler) sampler.releaseAll();
-    useUiStore.getState().setIsPlaying(false);
+    animFrame = requestAnimationFrame(tick);
   }, []);
 
   const togglePlayback = useCallback(() => {
-    if (isPlayingRef.current) {
+    if (useUiStore.getState().isPlaying) {
       stop();
     } else {
       play();
@@ -96,9 +103,10 @@ export function usePlayback() {
   }, [play, stop]);
 
   useEffect(() => {
+    mountedRef.current = true;
     return () => {
-      isPlayingRef.current = false;
-      cancelAnimationFrame(animRef.current);
+      mountedRef.current = false;
+      cancelAnimationFrame(animFrame);
     };
   }, []);
 
