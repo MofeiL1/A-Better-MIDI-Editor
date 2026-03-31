@@ -11,13 +11,19 @@ export function usePlayback() {
   const isPlayingRef = useRef(false);
 
   const play = useCallback(async () => {
+    if (isPlayingRef.current) return; // guard against double-entry during async init
+    isPlayingRef.current = true;
+
     await Tone.start();
 
     const { project } = useProjectStore.getState();
     const { activeClipId, playheadTick, setIsPlaying, setPlayheadTick, audioLatency } = useUiStore.getState();
 
     const clip = project.tracks.flatMap((t) => t.clips).find((c) => c.id === activeClipId);
-    if (!clip || clip.notes.length === 0) return;
+    if (!clip || clip.notes.length === 0) {
+      isPlayingRef.current = false;
+      return;
+    }
 
     const sampler = await getPianoSampler();
 
@@ -57,7 +63,6 @@ export function usePlayback() {
     }
 
     transport.start();
-    isPlayingRef.current = true;
     setIsPlaying(true);
 
     const startTime = Tone.now();
