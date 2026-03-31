@@ -449,7 +449,16 @@ export function analyzeTonalSegments(
   // Step 5: Global ranking + flags
   const globalRanking = computeGlobalRanking(segments);
   const topConfidence = globalRanking.length > 0 ? globalRanking[0].confidence : 0;
-  const isLikelyAtonal = topConfidence < atonalThreshold;
+
+  // Atonal check: use median of per-segment best confidence.
+  // A modulating piece (C→F#) has high per-segment confidence even though
+  // the global average is low. Only flag atonal if most segments are uncertain.
+  const segBestConfs = segments.map((s) => s.probs[s.bestIdx]).sort((a, b) => a - b);
+  const medianConf = segBestConfs.length > 0
+    ? segBestConfs[Math.floor(segBestConfs.length / 2)]
+    : 0;
+  const isLikelyAtonal = medianConf < atonalThreshold;
+
   const isAmbiguous =
     !isLikelyAtonal &&
     globalRanking.length >= 2 &&
