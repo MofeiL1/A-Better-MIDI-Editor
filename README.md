@@ -22,11 +22,11 @@ As a musician, I always felt like the tools in mainstream DAWs weren't quite the
 - **Chord analysis & resolution detection** — Chord-tone badges (R, 3, 5, 7...), Roman numeral analysis, resolution arrows (V-I, ii-V-I, tritone substitution). Optional jazz symbols (Settings).
 - **和弦分析与解决关系检测** — 和弦内音标签（R, 3, 5, 7...），Roman numeral 分析，解决关系箭头（V-I、ii-V-I、三全音替代）。可选 Jazz 符号（设置面板）。
 
-- **Auto key detection** — Scores 72 candidates (12 roots x 6 modes) by note coverage and tonic chord presence. One-click confirm to lock.
-- **自动调性检测** — 对 72 个候选调打分，参考音符覆盖率和主和弦存在性。一键确认锁定。
+- **Tonal segmentation & Key Strip** — HMM-based key detection that identifies key regions across the piece. Visual Key Strip above the chord track shows detected keys with color coding, hard boundaries between stable regions, and gradient fades for transitions. Hover for detailed analysis (top 5 candidates with fit/tonic/score breakdown). Handles modulations (e.g. Blue Bossa: Cm -> Db -> Cm), secondary dominants, and modal interchange without false key changes.
+- **调性分段 & Key Strip** — 基于 HMM 的逐小节调性检测，识别全曲调性区域。和弦轨道上方的 Key Strip 用颜色区分不同调性，确定区域硬边界，过渡区域渐变。悬浮查看详细分析（Top 5 候选调 + 各项评分）。能处理转调（如 Blue Bossa: Cm -> Db -> Cm）、二级属和弦、调式交换等不产生误判。
 
-- **Scale degree notation** — Caret notation showing degrees relative to the major scale with accidentals. Bass notes always display their degree.
-- **音阶级数标注** — 相对大调音阶显示级数及升降号。最低音始终显示级数。
+- **Scale degree notation** — Caret notation showing degrees relative to the detected key of each region. Degrees follow per-region key and are hidden in ambiguous or transitional areas. Bass notes always display their degree.
+- **音阶级数标注** — 相对当前区域检测调性显示级数。级数跟随每个区域的调性，在模糊或过渡区域自动隐藏。最低音始终显示级数。
 
 ### Also included / 其他功能
 
@@ -77,6 +77,7 @@ React 18, TypeScript, Vite, Zustand, Tone.js, Canvas. No backend.
 
 ## Planned / 计划中
 
+- User key override (click KeyStrip region to lock/change key) / 用户手动覆盖调性（点击 Key Strip 区域锁定/更改调性）
 - Voicing system (assign voicings to chord regions) / Voicing 系统（给和弦区域分配排列）
 - Chord velocity visualization / 和弦内力度分布可视化
 - User-created chord events / 用户手动创建和弦
