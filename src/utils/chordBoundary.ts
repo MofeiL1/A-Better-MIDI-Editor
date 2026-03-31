@@ -4,18 +4,16 @@
  * Detects where chords change in a sequence of notes, regardless of texture
  * (block chords, arpeggios, walking bass, anticipation, etc.).
  *
- * Key insight: the "harmonic bass" is not simply "the lowest note sounding now,"
- * but the lowest note that was recently attacked in the bass register.
- * In an ascending arpeggio C-E-G, the harmonic bass stays C because E and G
- * are higher than C. The bass only changes when:
- *   a) A new onset appears LOWER than the current bass, or
- *   b) The current bass note decays and a new lowest note takes over.
- *
- * Strategy:
- * 1. Track "structural bass" across beats (lowest onset, sticky until decayed)
- * 2. Bass PC change → chord boundary (primary signal)
- * 3. Significant upper-voice PC change → chord boundary (secondary signal)
- * 4. Between boundaries, accumulate all PCs with duration weighting
+ * Perceptual principles:
+ * 1. The human ear tracks "harmonic bass" as a separate auditory stream in
+ *    the low register. The bass is not simply "the lowest note sounding now"
+ *    — it's the lowest note recently attacked in the bass register. In an
+ *    ascending arpeggio C-E-G, the harmonic bass stays C.
+ * 2. Register separation: the ear distinguishes bass register from melody.
+ *    A melody note that briefly dips low doesn't override the established bass.
+ * 3. Bass notes on strong beats carry more perceptual weight.
+ * 4. Bass PC change is the primary chord-change signal; significant upper-voice
+ *    PC change is secondary (handles pedal points).
  */
 
 type SimpleNote = { pitch: number; startTick: number; duration: number };
@@ -23,7 +21,7 @@ type SimpleNote = { pitch: number; startTick: number; duration: number };
 export type ChordSegment = {
   startTick: number;
   endTick: number;
-  /** Pitch class of the bass note (lowest note onset in this segment) */
+  /** Pitch class of the structural bass in this segment */
   bassPc: number;
   /** All pitch classes present, duration-weighted */
   pcWeights: Float64Array;
@@ -129,7 +127,7 @@ export function detectChordBoundaries(
 
     // 2. Check onsets: if any onset is lower than current structural bass → update
     if (onsetNotes.length > 0) {
-      const lowestOnset = onsetNotes.reduce((a, b) => a.pitch < b.pitch ? a : b);
+      const lowestOnset = onsetNotes.reduce((a, c) => a.pitch < c.pitch ? a : c);
       if (!structBass || lowestOnset.pitch < structBass.pitch) {
         structBass = {
           pitch: lowestOnset.pitch,
@@ -149,7 +147,7 @@ export function detectChordBoundaries(
 
     // 3. If still no bass (fully decayed, no new onsets lower), use lowest active
     if (!structBass) {
-      const lowestActive = activeNotes.reduce((a, b) => a.pitch < b.pitch ? a : b);
+      const lowestActive = activeNotes.reduce((a, c) => a.pitch < c.pitch ? a : c);
       structBass = {
         pitch: lowestActive.pitch,
         pc: ((lowestActive.pitch % 12) + 12) % 12,
@@ -224,6 +222,8 @@ export function detectChordBoundaries(
   }
 
   // --- Phase 4: Build segments with duration-weighted PC distributions ---
+  // Use the structural bass from Phase 1 (not absolute lowest pitch).
+  // The structural bass represents what the ear perceives as the harmonic bass.
   const segments: ChordSegment[] = [];
 
   for (let i = 0; i < mergedBoundaries.length; i++) {
@@ -244,17 +244,27 @@ export function detectChordBoundaries(
 
     // Duration-weighted PC distribution
     const pcWeights = new Float64Array(12);
-    let lowestPitch = Infinity;
     for (const n of segNotes) {
       const pc = ((n.pitch % 12) + 12) % 12;
       const effectiveStart = Math.max(n.startTick, startTick);
       const effectiveEnd = Math.min(n.startTick + n.duration, endTick);
       const w = Math.max(0, effectiveEnd - effectiveStart);
       pcWeights[pc] += w;
-      if (n.pitch < lowestPitch) lowestPitch = n.pitch;
     }
 
-    const bassPc = ((lowestPitch % 12) + 12) % 12;
+    // Determine bass PC: use the lowest note with onset in this segment.
+    // Onset notes (attacked within the segment) are more relevant than sustained
+    // notes bleeding over from a previous segment.
+    let lowestOnsetPitch = Infinity;
+    let lowestAnyPitch = Infinity;
+    for (const n of segNotes) {
+      if (n.pitch < lowestAnyPitch) lowestAnyPitch = n.pitch;
+      if (n.startTick >= startTick && n.startTick < endTick && n.pitch < lowestOnsetPitch) {
+        lowestOnsetPitch = n.pitch;
+      }
+    }
+    const bassRefPitch = lowestOnsetPitch < Infinity ? lowestOnsetPitch : lowestAnyPitch;
+    const bassPc = ((bassRefPitch % 12) + 12) % 12;
 
     // Build PC set
     const maxW = Math.max(...pcWeights);
