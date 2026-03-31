@@ -181,6 +181,12 @@ export const PianoRoll: React.FC = () => {
   const scaleMode = tonalResult?.globalRanking[0]?.mode ?? 'major';
   const tonalRegions = tonalResult?.regions ?? [];
 
+  // Sync global key to uiStore for PianoKeys root highlighting
+  const setScale = useUiStore((s) => s.setScale);
+  useEffect(() => {
+    setScale(scaleRoot, scaleMode);
+  }, [scaleRoot, scaleMode, setScale]);
+
   // Chord labels (roman numerals for NoteLayer) — uses per-region key
   const chordLabels = useMemo(
     () => buildChordLabels(notes, project.ticksPerBeat, scaleRoot, tonalRegions),
@@ -924,6 +930,7 @@ export const PianoRoll: React.FC = () => {
             chordLabels={chordLabels}
             scaleRoot={scaleRoot}
             scaleMode={scaleMode}
+            tonalRegions={tonalRegions}
             resolutions={resolutions}
             ticksPerMeasure={ticksPerMeasure}
             useJazzSymbols={useJazzSymbols}
