@@ -445,21 +445,27 @@ export function analyzeTonalSegments(
   applyRegionTonicDisambiguation(posteriors, slices);
 
   // Build segment results with certainty scores
-  const maxEntropy = Math.log(NUM_CANDIDATES); // entropy of uniform distribution
   const segments: SegmentResult[] = slices.map((slice, t) => {
     const probs = posteriors[t];
     let bestIdx = 0;
+    let secondBest = -1;
     for (let i = 1; i < probs.length; i++) {
-      if (probs[i] > probs[bestIdx]) bestIdx = i;
+      if (probs[i] > probs[bestIdx]) {
+        secondBest = bestIdx;
+        bestIdx = i;
+      } else if (secondBest < 0 || probs[i] > probs[secondBest]) {
+        secondBest = i;
+      }
     }
 
-    // Certainty = 1 - normalized entropy
-    // entropy = -Σ p·log(p), normalized to [0,1] by dividing by log(N)
-    let entropy = 0;
-    for (let i = 0; i < NUM_CANDIDATES; i++) {
-      if (probs[i] > 1e-10) entropy -= probs[i] * Math.log(probs[i]);
-    }
-    const certainty = Math.max(0, Math.min(1, 1 - entropy / maxEntropy));
+    // Certainty = how far #1 leads over #2, scaled to [0, 1].
+    // ratio = best / secondBest: 1.0 = tied (certainty 0), 2.0+ = dominant (certainty ~1).
+    // Formula: certainty = 1 - secondBest/best, then clamped and scaled.
+    const bestProb = probs[bestIdx];
+    const secondProb = secondBest >= 0 ? probs[secondBest] : 0;
+    const certainty = bestProb > 1e-10
+      ? Math.max(0, Math.min(1, 1 - secondProb / bestProb))
+      : 0;
 
     return {
       startTick: slice.startTick,
