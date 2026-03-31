@@ -25,9 +25,9 @@ export type SegmentResult = {
   /** Index of highest-probability candidate */
   bestIdx: number;
   /**
-   * How "decided" this segment is: 0 = totally ambiguous, 1 = completely certain.
-   * Computed as 1 - (entropy / maxEntropy). High certainty → solid key label,
-   * low certainty → gray transitional zone in the UI.
+   * What % of this segment's notes (weighted by count×duration) fall within
+   * the detected key's scale. 0.95 = 95% of notes in-scale (very clear),
+   * 0.60 = only 60% fit (chromatic/transitional). Directly meaningful to users.
    */
   certainty: number;
   /**
@@ -445,27 +445,21 @@ export function analyzeTonalSegments(
   applyRegionTonicDisambiguation(posteriors, slices);
 
   // Build segment results with certainty scores
+  // Compute local fit scores for certainty display
+  const fitScores = slices.map((s) => scoreSlice(s));
+
   const segments: SegmentResult[] = slices.map((slice, t) => {
     const probs = posteriors[t];
     let bestIdx = 0;
-    let secondBest = -1;
     for (let i = 1; i < probs.length; i++) {
-      if (probs[i] > probs[bestIdx]) {
-        secondBest = bestIdx;
-        bestIdx = i;
-      } else if (secondBest < 0 || probs[i] > probs[secondBest]) {
-        secondBest = i;
-      }
+      if (probs[i] > probs[bestIdx]) bestIdx = i;
     }
 
-    // Certainty = how far #1 leads over #2, scaled to [0, 1].
-    // ratio = best / secondBest: 1.0 = tied (certainty 0), 2.0+ = dominant (certainty ~1).
-    // Formula: certainty = 1 - secondBest/best, then clamped and scaled.
-    const bestProb = probs[bestIdx];
-    const secondProb = secondBest >= 0 ? probs[secondBest] : 0;
-    const certainty = bestProb > 1e-10
-      ? Math.max(0, Math.min(1, 1 - secondProb / bestProb))
-      : 0;
+    // Certainty = what % of this segment's notes (weighted by count×duration)
+    // fall within the detected key's scale. This is the direct musical answer
+    // to "how well does this key fit the notes here?"
+    // 95% = almost all notes in-scale, 60% = lots of out-of-scale notes.
+    const certainty = fitScores[t][bestIdx];
 
     return {
       startTick: slice.startTick,
