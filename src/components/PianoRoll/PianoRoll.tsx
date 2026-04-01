@@ -5,15 +5,10 @@ import { PianoKeys } from './PianoKeys';
 import { VelocityLane } from './VelocityLane';
 import { Ruler, RULER_HEIGHT } from './Ruler';
 import { PlayheadHandle, HANDLE_HEIGHT } from './PlayheadHandle';
-import { ChordTrack } from './ChordTrack';
-import { KeyStrip } from './KeyStrip';
-import { analyzeTonalSegments } from '../../utils/tonalSegmentation';
 import { useProjectStore } from '../../store/projectStore';
 import { useUiStore } from '../../store/uiStore';
 import { usePreviewNote } from '../../hooks/usePreviewNote';
 import { pixelToTick, yToPitch, snapTick, getSnapTicksFromDivision, getSmartSnapTicks, tickToPixel, tickToSeconds } from '../../utils/timing';
-import { detectResolutions } from '../../utils/chordAnalysis';
-import { detectChordsFromNotes, buildOverlapChordToneMap, buildChordLabels, toChordInfoForKeyDetect } from '../../utils/chordDetection';
 import type { Note } from '../../types/model';
 
 const DEFAULT_VEL_HEIGHT = 80;
@@ -60,7 +55,7 @@ export const PianoRoll: React.FC = () => {
   const {
     tool, viewport, selectedNoteIds, snapDivision,
     activeClipId, playheadTick, isPlaying,
-    lastDrawnDuration, useJazzSymbols,
+    lastDrawnDuration,
     setViewport, setSelectedNoteIds, clearSelection,
     setActiveClip, setActiveTrack, setPlayheadTick,
     setLastDrawnDuration,
@@ -146,79 +141,6 @@ export const PianoRoll: React.FC = () => {
   const tsNum = ts.numerator ?? 4;
   const tsDen = ts.denominator ?? 4;
   const ticksPerMeasure = project.ticksPerBeat * tsNum * (4 / tsDen);
-
-  // Overlap-based chord tone map (replaces per-measure buildChordToneMap)
-  const chordToneMap = useMemo(
-    () => buildOverlapChordToneMap(notes, project.ticksPerBeat, drawingNoteId),
-    [notes, project.ticksPerBeat, drawingNoteId],
-  );
-
-  // Overlap-based chord detection (used for key detection, labels, duration bars)
-  const detectedChords = useMemo(
-    () => detectChordsFromNotes(notes, project.ticksPerBeat),
-    [notes, project.ticksPerBeat],
-  );
-
-  // Convert to ChordInfo for key detection
-  const chordsForKeyDetect = useMemo(
-    () => toChordInfoForKeyDetect(notes, project.ticksPerBeat),
-    [notes, project.ticksPerBeat],
-  );
-
-  // Tonal segmentation: per-bar key regions with probabilities
-  const tonalResult = useMemo(() => {
-    if (notes.length === 0) return null;
-    const simpleNotes = notes.map((n) => ({
-      pitch: n.pitch,
-      startTick: n.startTick,
-      duration: n.duration,
-    }));
-    return analyzeTonalSegments(simpleNotes, project.ticksPerBeat);
-  }, [notes, project.ticksPerBeat]);
-
-  // Derive global key from tonal segmentation
-  const scaleRoot = tonalResult?.globalRanking[0]?.root ?? 0;
-  const scaleMode = tonalResult?.globalRanking[0]?.mode ?? 'major';
-  const tonalRegions = tonalResult?.regions ?? [];
-
-  // Sync global key to uiStore for PianoKeys root highlighting
-  const setScale = useUiStore((s) => s.setScale);
-  useEffect(() => {
-    setScale(scaleRoot, scaleMode);
-  }, [scaleRoot, scaleMode, setScale]);
-
-  // Chord labels (roman numerals for NoteLayer) — uses per-region key
-  const chordLabels = useMemo(
-    () => buildChordLabels(notes, project.ticksPerBeat, scaleRoot, tonalRegions),
-    [notes, project.ticksPerBeat, scaleRoot, tonalRegions],
-  );
-
-  // Resolution detection (V→I, ii→V, tritone sub, etc.)
-  const resolutions = useMemo(
-    () => detectResolutions(chordsForKeyDetect, scaleRoot),
-    [chordsForKeyDetect, scaleRoot],
-  );
-
-  // ChordTrack drag handlers
-  const handleChordResizeEnd = useCallback((_chordId: string, memberNoteIds: string[], deltaTicks: number) => {
-    if (!activeClipId || memberNoteIds.length === 0) return;
-    resizeNotes(activeClipId, memberNoteIds, deltaTicks);
-  }, [activeClipId, resizeNotes]);
-
-  const handleChordTrimStart = useCallback((_chordId: string, memberNoteIds: string[], deltaTicks: number) => {
-    if (!activeClipId || memberNoteIds.length === 0) return;
-    trimNoteStart(activeClipId, memberNoteIds, deltaTicks);
-  }, [activeClipId, trimNoteStart]);
-
-  const handleSelectChordNotes = useCallback((noteIds: string[], addToSelection: boolean) => {
-    if (addToSelection) {
-      const next = new Set(selectedNoteIds);
-      for (const id of noteIds) next.add(id);
-      setSelectedNoteIds(next);
-    } else {
-      setSelectedNoteIds(new Set(noteIds));
-    }
-  }, [selectedNoteIds, setSelectedNoteIds]);
 
   // drag type extended with trim-start and draw-resize
   const dragState = useRef<{
@@ -859,39 +781,10 @@ export const PianoRoll: React.FC = () => {
         />
       </div>
 
-      {/* Key Strip row */}
-      <div style={{ display: 'flex' }}>
-        <div style={{ width: PIANO_KEY_WIDTH, flexShrink: 0, backgroundColor: '#1a1a1e', borderRight: '2px solid #555', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <span style={{ fontSize: 8, color: '#666', fontFamily: '-apple-system, "SF Pro Text", sans-serif', letterSpacing: 0.5 }}>KEY</span>
-        </div>
-        <KeyStrip
-          width={gridWidth}
-          height={Math.max(14, pps - 2)}
-          scrollX={scrollX}
-          pixelsPerTick={ppt}
-          regions={tonalResult?.regions ?? []}
-          isAtonal={tonalResult?.isLikelyAtonal ?? false}
-        />
-      </div>
-
-      {/* Chord Track row */}
+      {/* Chord Track row — placeholder for future chord system */}
       <div style={{ display: 'flex' }}>
         <div style={{ width: PIANO_KEY_WIDTH, flexShrink: 0, backgroundColor: '#1e1e1e', borderRight: '2px solid #555' }} />
-        <ChordTrack
-          width={gridWidth}
-          height={pps}
-          scrollX={scrollX}
-          pixelsPerTick={ppt}
-          snapTicks={snapTicks}
-          chords={detectedChords}
-          onResizeEnd={handleChordResizeEnd}
-          onTrimStart={handleChordTrimStart}
-          onDragBegin={beginDrag}
-          onDragEnd={endDrag}
-          useJazzSymbols={useJazzSymbols}
-          selectedNoteIds={selectedNoteIds}
-          onSelectChordNotes={handleSelectChordNotes}
-        />
+        <div style={{ flex: 1, height: pps, backgroundColor: '#1e1e22' }} />
       </div>
 
       {/* Main grid area */}
@@ -926,14 +819,6 @@ export const PianoRoll: React.FC = () => {
             pixelsPerSemitone={pps}
             notes={notes}
             selectedNoteIds={selectedNoteIds}
-            chordToneMap={chordToneMap}
-            chordLabels={chordLabels}
-            scaleRoot={scaleRoot}
-            scaleMode={scaleMode}
-            tonalRegions={tonalRegions}
-            resolutions={resolutions}
-            ticksPerMeasure={ticksPerMeasure}
-            useJazzSymbols={useJazzSymbols}
             ghostNotes={ghostNotes}
             ghostCopyMode={ghostCopyMode}
             cursor={cursor}

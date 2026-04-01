@@ -11,7 +11,8 @@
       "Read(//c/Users/Eddy-/.claude/skills/gstack/**)",
       "Bash(ls setup*)",
       "Bash(command -v bun)",
-      "Bash(bun --version)"
+      "Bash(bun --version)",
+      "Bash(npm run:*)"
     ]
   }
 }
