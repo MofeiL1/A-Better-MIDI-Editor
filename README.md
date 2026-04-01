@@ -18,7 +18,7 @@ As a musician, I always felt like the tools in mainstream DAWs weren't quite the
 
 ### Flex Tool — A new way to input notes / Flex 工具 — 一种全新的音符输入方式
 
-![Flex Tool demo](docs/FlexTool.gif)
+<img src="docs/FlexTool.gif" width="600" alt="Flex Tool demo">
 
 The Flex tool is the default tool. Click to place a note with auto-legato duration (extends to the next note automatically). The note head is a right-pointing triangle; the extension line shows the effective duration. Confirmed-duration notes have solid extension lines; auto-legato notes have semi-transparent ones.
 
@@ -26,7 +26,7 @@ Flex 工具是默认工具。点击放置音符，自动连奏时值（自动延
 
 ### Right-Click Tool Wheel / 右键工具轮盘
 
-![Tool Wheel demo](docs/ToolWheel.gif)
+<img src="docs/ToolWheel.gif" width="600" alt="Tool Wheel demo">
 
 Hold right-click anywhere on the piano roll to open a radial tool picker. Flick the mouse in the direction of the tool you want and release. No need to look — pure muscle memory.
 
