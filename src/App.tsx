@@ -7,6 +7,7 @@ import { usePlayback } from './hooks/usePlayback';
 import { useIsMobile } from './hooks/useIsMobile';
 import { onSamplerReady, preloadPianoSampler } from './audio/pianoSampler';
 import { useUiStore } from './store/uiStore';
+import { useProjectStore } from './store/projectStore';
 
 // Start loading the piano sampler immediately on app start
 preloadPianoSampler();
@@ -22,7 +23,11 @@ const DesktopApp: React.FC = () => {
 
   useEffect(() => {
     const handleBeforeUnload = (e: BeforeUnloadEvent) => {
-      e.preventDefault();
+      // Warn if user has made any edits (undo history is non-empty)
+      const { project } = useProjectStore.getState();
+      if (project.history.length > 0) {
+        e.preventDefault();
+      }
     };
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
