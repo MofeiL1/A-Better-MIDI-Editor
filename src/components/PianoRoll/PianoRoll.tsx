@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState, useCallback, useMemo } from 'react';
+import React, { useRef, useEffect, useState, useCallback } from 'react';
 import { Grid } from './Grid';
 import { NoteLayer } from './NoteLayer';
 import { PianoKeys } from './PianoKeys';
@@ -34,7 +34,7 @@ export const PianoRoll: React.FC = () => {
   const [velHeight, setVelHeight] = useState(DEFAULT_VEL_HEIGHT);
   const [cursor, setCursor] = useState<string>(PENCIL_CURSOR);
   const [selectBox, setSelectBox] = useState<SelectBox>(null);
-  const [drawingNoteId, setDrawingNoteId] = useState<string | null>(null);
+  const [, setDrawingNoteId] = useState<string | null>(null);
   const [modifierKeys, setModifierKeys] = useState<{ shift: boolean; cmdCtrl: boolean }>({ shift: false, cmdCtrl: false });
   const [ghostNotes, setGhostNotes] = useState<{ pitch: number; startTick: number; duration: number; velocity: number }[]>([]);
   const [ghostCopyMode, setGhostCopyMode] = useState(false);
