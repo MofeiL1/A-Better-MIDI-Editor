@@ -16,7 +16,19 @@ As a musician, I always felt like the tools in mainstream DAWs weren't quite the
 
 ## Features / 主要功能
 
-### Also included / 其他功能
+### Flex Tool — A new way to input notes / Flex 工具 — 一种全新的音符输入方式
+
+The Flex tool is the default tool. Click to place a note with auto-legato duration (extends to the next note automatically). The note head is a right-pointing triangle; the extension line shows the effective duration. Confirmed-duration notes have solid extension lines; auto-legato notes have semi-transparent ones.
+
+Flex 工具是默认工具。点击放置音符，自动连奏时值（自动延伸到下一个音符）。音符头是向右的三角形，延长线显示有效时值。已确认时值的音符延长线实心，自动连奏的音符延长线半透明。
+
+### Right-Click Tool Wheel / 右键工具轮盘
+
+Hold right-click anywhere on the piano roll to open a radial tool picker. Flick the mouse in the direction of the tool you want and release. No need to look — pure muscle memory.
+
+在钢琴卷帘任意位置按住右键打开径向工具选择轮盘。向目标工具方向甩鼠标松开即可。无需看屏幕，纯肌肉记忆。
+
+### Other features / 其他功能
 
 - Smart Snap — Zoom-adaptive grid, auto-adjusts resolution as you zoom (1/32 to whole bar).
 - 智能吸附 — 缩放自适应网格，放大时自动变细、缩小时自动变粗。
@@ -32,32 +44,45 @@ As a musician, I always felt like the tools in mainstream DAWs weren't quite the
 - 带轨道选择的 MIDI 导入导出。
 - Interactive piano keyboard — Hold to audition, drag for glissando, click to select by pitch.
 - 可交互钢琴键盘 — 按住试听，拖动刮奏，点击选中同音高音符。
-- Modifier tool switching — Shift for temporary Pointer, Ctrl/Cmd for temporary Pencil.
-- 修饰键临时工具切换。
+- Modifier tool switching — Ctrl/Cmd temporarily switches to Pointer in Flex/Pencil modes.
+- 修饰键临时工具切换 — Ctrl/Cmd 在 Flex/Pencil 模式下临时切换为指针。
+- Duration presets — Q/W/E/R/T to set note duration (whole to sixteenth), also applies to selected notes.
+- 时值预设 — Q/W/E/R/T 设置音符时值（全音符到十六分音符），同时应用到选中音符。
 
 ## Shortcuts / 快捷键
 
 | Key / 按键 | Action / 功能 |
 |-----|--------|
-| 空格 Space | Play / Stop 播放/停止 |
-| 1 / 2 / 3 | Pointer / Pencil / Eraser 指针/画笔/橡皮 |
+| Space 空格 | Play / Stop 播放/停止 |
+| 1 / 2 / 3 | Pointer / Flex / Pencil 指针/Flex/画笔 |
+| Right-click hold 右键按住 | Tool wheel 工具轮盘 |
+| Q / W / E / R / T | Duration preset: whole / half / quarter / eighth / sixteenth 时值预设 |
+| Enter | Confirm duration (auto-legato to fixed) 确认时值 |
+| . (Period) | Clear duration (fixed to auto-legato) 清除时值 |
 | Ctrl/Cmd+Z | Undo 撤销 |
-| Ctrl/Cmd+Shift+Z 或 Ctrl+Y | Redo 重做 |
+| Ctrl/Cmd+Shift+Z / Ctrl+Y | Redo 重做 |
 | Ctrl/Cmd+C / V | Copy / Paste at playhead 复制/粘贴 |
 | Ctrl/Cmd+A | Select all 全选 |
 | Delete / Backspace | Delete selected 删除选中 |
 | Escape | Clear selection 清除选区 |
-| Shift+单击 Click | Add to selection 加选 |
+| Shift+Click 单击 | Add to selection 加选 |
 | Arrow keys 方向键 | Move selected notes (left/right by snap, up/down by semitone) 移动选中音符 |
 | Shift+Up/Down 上/下 | Move selected notes by octave 移动选中音符一个八度 |
-| Alt+Drag 拖动 | Duplicate notes (release Alt before mouseup to cancel) 复制音符 |
-| Shift (Pencil mode) | Temporary Pointer tool 临时切换为指针工具 |
-| Ctrl/Cmd (Pointer mode) | Temporary Pencil tool 临时切换为画笔工具 |
-| 鼠标中键按住拖动 Hold Middle Mouse | Joystick pan — speed follows distance from origin 摇杆式平移，速度随离原点距离变化 |
-| Ctrl+滚轮 Scroll | Zoom (centered on playhead) 缩放（以播放头为中心） |
-| Shift+滚轮 Scroll | Horizontal scroll 水平滚动 |
-| 滚轮 Scroll | Vertical scroll 垂直滚动 |
-| 触控板两指滑动 Trackpad | Pan in any direction 任意方向平移 |
+| Alt+Drag 拖动 | Duplicate notes 复制音符 |
+| Middle mouse hold 鼠标中键按住 | Joystick pan 摇杆式平移 |
+| Ctrl+Scroll 滚轮 | Zoom (centered on playhead) 缩放 |
+| Shift+Scroll 滚轮 | Horizontal scroll 水平滚动 |
+| Scroll 滚轮 | Vertical scroll 垂直滚动 |
+
+## Note Interaction Zones / 音符交互区域
+
+Each note has distinct interaction zones depending on its duration state:
+
+| Zone | Confirmed duration | Auto-legato (null duration) |
+|------|-------------------|---------------------------|
+| Triangle head 三角形头 | Trim start (drag to change start position) 裁剪开头 | Move (drag to change pitch + position) 移动 |
+| Extension line body 延长线中段 | Move 移动 | Transparent in Flex tool (draw through) Flex 工具下透明 |
+| Extension line end 延长线尾部 | Resize (drag to change duration) 调整时值 | Resize 调整时值 |
 
 ## Tech / 技术栈
 
@@ -65,17 +90,16 @@ React 18, TypeScript, Vite, Zustand, Tone.js, Canvas. No backend.
 
 ## Planned / 计划中
 
-- Chord grouping — select notes and group them into a named chord object with degree labels / 和弦编组 — 选中音符后组合为带级数标签的和弦对象
-- Voicing transforms — apply drop-2, rootless, voice leading to grouped chords / Voicing 变换 — 对和弦编组应用 drop-2、rootless、声部进行等操作
-- Chord velocity visualization / 和弦内力度分布可视化
+- Chord grouping — select notes and group them into a named chord object with degree labels / 和弦编组
+- Voicing transforms — apply drop-2, rootless, voice leading to grouped chords / Voicing 变换
+- Key detection and scale degree display / 调性检测与音阶级数显示
+- Chord track with Roman numeral analysis / 和弦轨道与罗马数字分析
 
 ## Future Outlook / 未来展望
 
 - **Rule-Based Arpeggio & Accompaniment / 基于规则的琶音与伴奏生成** — Define rhythm patterns and pitch rules to automatically expand chords into arpeggios and accompaniment figures. Built-in presets (Alberti bass, broken chords, etc.) with full custom rule support. Deterministic and fully controllable — no black boxes.
-- **基于规则的琶音与伴奏生成** — 定义节奏型和音高规则，自动将和弦展开为琶音和伴奏织体。内置常见模式（阿尔贝蒂低音、分解和弦等），支持自定义规则。确定性，完全可控，没有黑箱。
 
 - **Melody Analysis & Variation Management / 旋律分析与变奏管理** — Automatic motif and phrase structure recognition. A variation tree that lets you save multiple versions of the same passage and switch between them for comparison. Built-in transformation helpers: inversion, retrograde, rhythmic augmentation/diminution, and more.
-- **旋律分析与变奏管理** — 自动识别旋律动机与乐句结构。变奏版本树，对同一段旋律保存多个变奏，随时切换对比。内置变奏手法辅助：倒影、逆行、节奏扩大/缩小等。
 
 > **No Generative AI / 不包含生成式 AI 功能** — This project does not include and will never incorporate generative AI features. We will never use unauthorized music from others in development. This is a tool that empowers creators — not one that replaces them.
 >

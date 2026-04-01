@@ -1,110 +1,77 @@
-# TASKS.md — 当前任务跟踪
+# TASKS.md — 任务跟踪
 
 ## 已完成
 
+### 基础架构
+
 - [x] 项目脚手架搭建（Vite + React + TypeScript）
-- [x] 核心数据类型定义（Project, Track, Clip, Note, BendPoint 等）
+- [x] 核心数据类型定义（Project, Track, Clip, Note）
 - [x] Zustand store 设计与实现（projectStore + uiStore）
-- [x] 工具函数：tick/pixel 转换、吸附、音乐理论（音阶/和弦检测）
-- [x] Piano Roll 核心渲染（Canvas：网格 + 音符层 + 琴键列）
-- [x] 音阶感知高亮（琴键和网格行按调性着色）
-- [x] 基础编辑交互（绘制/选择/擦除工具、拖拽移动、缩放时长）
-- [x] Velocity Lane（力度柱状图编辑）
-- [x] 键盘快捷键（1/2/3 切工具、Delete 删除、Ctrl+Z/Y 撤销重做、Space 播放）
-- [x] MIDI 导入导出（@tonejs/midi）
-- [x] Undo/Redo 快照系统
-- [x] 工具栏 UI — Apple 美学风格（毛玻璃、段落控件、圆角）
+- [x] 工具函数：tick/pixel 转换、吸附、音乐理论
 - [x] GitHub Pages 自动部署（GitHub Actions）
-- [x] 播放功能（Tone.js PolySynth + 播放头 + Transport 调度）
-- [x] 桌面/手机端分离架构 → 已改为纯桌面端，手机显示提示
+- [x] Undo/Redo 快照系统（50 层，手势级合并）
 
-### 2026-03-30 完成
+### Piano Roll 核心
 
-- [x] Logic Pro 风格桌面 UI 完整重写（深色主题、velocity 色谱音符、写实琴键）
-- [x] Salamander Grand Piano 采样器（正确的 MIDI Note Off 停止）
-- [x] Ruler + 底部 PlayheadHandle（小节/拍标记、可拖拽播放头）
-- [x] 绝对位置追踪（音符移动/缩放/裁剪头部，无 delta 累积误差）
-- [x] 画笔工具：创建后拖拽同时设置音高和时长
-- [x] Undo 合并：beginDrag/endDrag 确保每个手势一个 undo 步骤
-- [x] 选区状态存入 undo 历史
-- [x] 音符预览：新预览打断旧预览，使用实际时长和力度
-- [x] 复制粘贴（Ctrl+C/V）在播放头位置粘贴
-- [x] 空格键全局拦截播放/停止
+- [x] Canvas 渲染（网格 + 音符层 + 琴键列）
+- [x] Ruler + PlayheadHandle（小节/拍标记、可拖拽播放头）
+- [x] Velocity Lane（力度色谱、精确抓取区、双向 hover 联动）
+- [x] 播放功能（Tone.js Sampler + Transport 调度）
+- [x] Smart Snap（zoom-adaptive 网格，1/32 到全音符）
+- [x] Zoom Slider（9 档位离散缩放，播放头为锚点）
 - [x] 中键摇杆式平移
-- [x] 缩放以播放头为中心
-- [x] Shift+点击加选（音符和 velocity 柱）
-- [x] 全局 document mouseup（防止拖拽状态卡死）
-- [x] VelocityLane 完整重写：velocity 色谱、精确抓取区、绘制顺序感知 hit test、双向 hover 高亮联动 NoteLayer、相对拖拽（无跳变）、可调大小、点击选中音符、多选同步修改 velocity
-- [x] MIDI 导入修复（PPQ getter 变通、UI 状态重置、过滤空轨道、多轨选择对话框、合并到单 clip）
-- [x] MIDI 导出修复（PPQ 只读属性、DOM 挂载下载链接）
-- [x] 钢琴键交互：点击试听（按住持续、松手停止、支持刮奏）、点击选中同音高音符、Shift 加选、根据选中 Key 显示主音标签、空键清除选区
-- [x] Snap 修复：公式从 `ticksPerBeat/division` 改为 `ticksPerBeat*4/division`，Grid 同步
-- [x] Ctrl+滚轮缩放拦截浏览器页面缩放（native addEventListener passive:false）
-- [x] 深色 dropdown（colorScheme: dark）
-- [x] 删除移动版组件，手机访问显示中英文提示框
-- [x] 默认分支改为 main，GitHub Pages 部署从 main 触发
 
-### 2026-03-30 完成（第二批）
+### 统一音符模型（2026-04-01 重构）
 
-- [x] README 添加未来展望章节（可视化乐理、基于规则的琶音/伴奏生成、旋律分析与变奏管理）
-- [x] README 添加无生成式 AI 声明
-- [x] 页面刷新/关闭前弹出浏览器确认对话框，防止意外丢失未导出的工作
+- [x] 合并 Dot 和 Note 为统一 Note 类型（`duration: number | null`）
+- [x] null-duration = 自动连奏（延伸到下一个音符），number = 已确认时值
+- [x] noteDuration.ts：computeAutoLegato、getEffectiveDuration、computeNullDurations
+- [x] 播放系统统一使用 getEffectiveDuration
+- [x] 旧 dotDuration.ts 删除，loadProject 迁移旧存档格式
 
-### 2026-03-30 完成（第三批）
+### 三角形音符头（2026-04-01）
 
-- [x] 重命名系统（项目名可编辑，铅笔 SVG 图标，Enter/Escape 确认，focus 时图标亮）
-- [x] 可更改 Time Signature（分子/分母下拉选择，影响 Grid/Ruler/PlayheadHandle，公式 ticksPerBeat*numerator*4/denominator）
-- [x] BPM 可编辑（导入后可修改，带 undo）
-- [x] 播放控件/撤销重做图标全部换为 SVG（禁止代码中使用 emoji）
-- [x] 所有控件按钮 hover 高亮效果
-- [x] 播放/空格 bug 修复（capture phase 拦截 + stopPropagation，按钮 tabIndex={-1}，消除双重 toggle）
-- [x] 钢琴键 Shift+拖选改为范围模式（起始→当前 pitch 连续范围，反向缩小，不再 toggle 抖动）
-- [x] 钢琴键选区操作纳入 undo（beginDrag/endDrag 包裹整个手势）
+- [x] 圆形音符头改为向右等边三角形（三角圆角，占满轨道高度）
+- [x] 延长线从音符起始位置开始绘制，三角形头覆盖在上层
+- [x] Ghost notes 和 preview 同步改为三角形
+- [x] 去掉所有白色描边/线框
 
-### 2026-03-30 完成（第四批）
+### 交互区域重构（2026-04-01）
 
-- [x] 空格键修复：移除 HTMLSelectElement 豁免 + 所有 select 加 tabIndex={-1}，空格始终触发播放
-- [x] Auto Key Detection：72 候选调暴力评分（fitScore + tonic chord 验证），默认 Auto 模式
-- [x] Confirm Key 按钮：锁定检测到的调性，方便在确定调上继续创作
-- [x] 音阶级数标注（^记号）：相对大调音阶的级数，带升降号（b3, #4, b7 等），和弦上下文消歧
-- [x] Bass line 级数常驻显示：每小节最低音始终在音符下方显示级数 badge
-- [x] 和弦解决关系检测：纯根音运动分析（五度下行 → V→I，三全音替代 → bII→I），ii-V-I 三连检测
-- [x] m#5 → 大三转位：Am#5 自动识别为 F/A 等
-- [x] Modifier 临时工具切换：Pencil+Shift → Pointer，Pointer+Ctrl/Cmd → Pencil
-- [x] Pencil 模式有选中音符时点击空白处取消选择（而非画新音符），光标跟随状态变化
-- [x] 铅笔光标 SVG 图标
-- [x] Zoom Slider：工具栏右侧 9 档位离散缩放滑条（放大镜 +/- 图标），默认 0.125 居中，以播放头为锚点
-- [x] 默认 Demo 项目：16 小节爵士和弦进行（ii-V-I、tritone sub、次属和弦、modal interchange）
-- [x] 和弦标签拆分为两行：上行 Roman numeral（大、亮），下行和弦名（小、暗），顶部一行只有功能分析更干净
+- [x] 三角形头对 hit test "透明"，延长线 zone 穿透三角形
+- [x] confirmed 音符：三角形头 = trim-start，延长线中段 = body(move)，尾部 = resize
+- [x] null-duration 音符：三角形头 = body(move)，延长线中段 = ext-body（flex 工具下透明），尾部 = ext-end(resize)
+- [x] Flex 工具下 null-duration 的 ext-body 不显示 hover，显示 preview ghost 穿透
+- [x] trimNoteStart 支持 null-duration（只移动 startTick，不调整 duration）
 
-### 2026-03-30 完成（第五批 — Chord Track + Smart Snap）
+### Flex 工具（2026-04-01）
 
-- [x] ChordEvent 数据模型（替换空壳 ChordRegion）
-- [x] Overlap-based 和弦检测（按音符时间重叠分组，替代 per-measure 检测）
-- [x] On-beat/off-beat 权重（off-beat 音符必须延续到 on-beat 才算和弦内音）
-- [x] ChordTrack UI（和弦 duration 色块 + 和弦名，Ruler 下方独立轨道）
-- [x] 和弦边界拖动（拖动和弦边缘同时移动 memberNoteIds 中的音符）
-- [x] 和弦符号系统（直接从 tonal.js 检测结果提取，不再依赖固定映射表）
-- [x] Jazz chord symbols 设置（Settings 面板，△7 °7 ø7，仅在显示层转换）
-- [x] Roman numeral 修复（half-dim → m7b5 后缀，ii-V-I 检测支持 m7b5 → dom7 → x）
-- [x] Resolution 标签定位改为 toTick（右对齐到目标和弦开头前）
-- [x] 三全音替代标签根据目标和弦性质显示 I 或 i
-- [x] Smart Snap（zoom-adaptive 网格，1/32→1/16→1/8→1/4→1/2→1/1，阈值 20px）
-- [x] 铅笔工具音符长度继承（lastDrawnDuration，默认 1/4，拖动后更新）
-- [x] 铅笔拖动采用相对偏移量（1:1 从点击位置偏移到音符结尾）
-- [x] 默认工具改为 Pointer，默认 snap 改为 Smart
-- [x] Settings 齿轮按钮（TransportBar 左上角）
-- [x] 和弦条点击选中所有和弦内音，双向联动（选中所有 member notes → 和弦条高亮）
-- [x] 音符群组移动边界保护（任一音符到边界时整组停止，保持相对位置）
-- [x] 方向键移动选中音符（左右按 snap 精度，上下 1 半音，Shift+上下 1 八度）
-- [x] Alt+拖动复制音符（Logic Pro 风格：拖动时原位显示 ghost，Alt 控制复制/移动切换）
-- [x] Ghost notes 视觉反馈（移动模式：虚线轮廓；复制模式：半透明真实音符样式，实时随 Alt 切换）
-- [x] 和弦标签只在 ChordTrack 显示和弦名，NoteLayer 只显示 Roman numeral（消除重复）
+- [x] 重命名 dot → flex（ToolMode、Toolbar、键盘快捷键）
+- [x] 默认工具改为 Flex
+- [x] Q/W/E/R/T 时值预设（toggle + 应用到选中音符）
+- [x] Enter 确认时值，Period(.) 清除时值
+- [x] 点击空白放置音符（duration = preset 或 null）
+- [x] Ctrl/Cmd 临时切换为 Pointer
 
-## 已知架构注意事项
+### 右键工具轮盘（2026-04-01）
 
-- **projectStore 中的 chord CRUD actions**（addChordEvent, updateChordEvent, deleteChordEvent）已定义但尚未被 UI 调用。这些是为未来用户手动创建/编辑和弦预留的接口，目前 ChordTrack 只显示自动检测结果。
-- **双管道和弦数据流**：ChordTrack 使用 `detectedChords`（ChordEvent[]），NoteLayer 使用 `chordToneMap`（Map），两者从同一音符数据通过不同函数派生。当前因为输入相同所以结果一致，但如果未来引入用户手动和弦，需要统一数据源。
+- [x] 右键拦截浏览器默认菜单
+- [x] 径向 SVG 轮盘（Pointer 左上 / Flex 右上 / Pencil 下方）
+- [x] 纯角度判断，无距离上限（盲操 — 向方向甩鼠标即可）
+- [x] 内圈死区（小于 INNER_RADIUS 不选择）
+- [x] 背景渐变（中心不透明→边缘透明），图标/文字始终不透明
+- [x] 内圈 + 分割线描边，外圈无描边
+
+### 其他功能
+
+- [x] 删除 eraser 工具
+- [x] 删除默认 demo 曲（空白项目启动）
+- [x] MIDI 导入导出（多轨选择，导入为 confirmed duration）
+- [x] 复制粘贴（Ctrl+C/V，播放头位置粘贴）
+- [x] Alt+拖动复制（ghost 实时切换移动/复制）
+- [x] 钢琴键交互（试听、刮奏、按音高选中）
+- [x] 项目重命名、BPM 编辑、Time Signature 编辑
+- [x] 空格键全局拦截（capture phase）
 
 ## 当前在做
 
@@ -112,64 +79,13 @@
 
 ## 下一步
 
-- [ ] 音频延迟深度优化：用户可调 lookAhead 滑块（范围 10–150ms），探索 AudioContext latencyHint 设置
-- [ ] 框选后的智能选择功能（最低音/第N低音/按时值筛选）
-- [x] 重命名系统（项目名可编辑，铅笔图标，Enter/Escape 确认）
-- [x] 可更改 Time Signature（分子/分母下拉选择，影响网格/Ruler/PlayheadHandle）
-- [x] BPM 可编辑（导入后可修改）
-- [ ] 和弦内 velocity 分布可视化与编辑（纵向展示同一时间点多个音符的 vel 分布，直观调整和弦内部力度平衡）
-- [ ] Feature 告示栏（向用户展示功能介绍、快捷键提示、更新日志等）
-
-## 待实现：Smart Snap — 速度感知自适应吸附
-
-### 概念
-
-鼠标拖拽速度决定 snap 粒度：快速移动时 snap 到大节拍（bar/beat），慢速移动时 snap 到细分（1/16、1/32）。这是一个原创交互特性，目前没有 DAW 实现过。
-
-### 调研：类似交互模式
-
-- **macOS 指针加速**：慢移精确、快移粗糙，非线性曲线映射物理速度→光标速度。完全相同的概念，应用在光标灵敏度上。
-- **Raw Accel（游戏鼠标工具）**：用户自定义速度→灵敏度映射曲线（线性、幂函数、S 曲线等），开源参考：https://rawaccel.net/
-- **iOS 惯性滚动**：手指速度→滚动距离的非线性映射，带动量衰减。
-- **Ableton / Logic Pro**：只有 Ctrl/Shift 修饰键切换粗/细模式，不是连续速度感知。
-- **KnobSlider 论文**（Frontiers in Robotics and AI）：研究旋钮 vs 滑条的粗/细控制体验，结论是不同物理形态适合不同精度需求。
-
-### 实现计划
-
-#### 1. 速度测量（~10 行）
-- `mousemove` 时记录最近 3-5 个 `{timestamp, clientX}` 采样点（`useRef`）
-- 计算滑动窗口内的平均速度（px/ms）
-- 不触发 React 渲染
-
-#### 2. 速度→snap 映射（~15 行，核心）
-- 音乐层级候选：`[1920, 960, 480, 240, 120, 60]` ticks（全音符→三十二分音符）
-- 初始阈值（需要手动调参）：
-  - `< 0.5 px/ms` → 1/32
-  - `0.5–2 px/ms` → 1/16
-  - `2–5 px/ms` → 1/8
-  - `5–10 px/ms` → 1/4
-  - `> 10 px/ms` → 1/1
-- **对数曲线**而非线性：人对慢速的感知分辨率远高于快速
-- **迟滞（hysteresis）**：细→粗的切换阈值比粗→细高 20%，防止在边界来回抖动
-
-#### 3. 集成（~10 行）
-- `SnapResolution` 类型新增 `'smart'`
-- `handleMouseMove` 中 move/resize/draw-resize/trim-start 分支根据实时速度计算 `snapTicks`
-- Grid 背景网格跟随变化，加 50ms 防抖避免频繁重绘
-
-#### 4. 调试（开发阶段）
-- 界面角落显示当前速度值和对应的 snap 粒度（调参用，完成后移除）
-
-### 风险与注意事项
-- 触摸板的速度测量噪声可能导致 snap 频繁跳动，需要增大滑动窗口或加低通滤波
-- 用户可能觉得"不可预测"，需要在 Toolbar 显示当前实际 snap 值作为视觉反馈
-- 阈值、曲线形状、迟滞量需要反复手动测试调优，无法一次性确定最佳参数
-
-### 参考链接
-- Raw Accel 开源项目：https://rawaccel.net/
-- Apple 指针加速设置：https://support.apple.com/guide/mac-help/change-your-mouse-or-trackpads-response-speed-mchlp1138/mac
-- NN/g Sliders & Knobs 研究：https://www.nngroup.com/articles/sliders-knobs/
-- KnobSlider 论文：https://www.frontiersin.org/journals/robotics-and-ai/articles/10.3389/frobt.2019.00079/full
+- [ ] 调性检测与音阶级数显示
+- [ ] 和弦轨道（自动检测 + Roman numeral 分析）
+- [ ] 和弦编组（选中音符组合为和弦对象）
+- [ ] Voicing 变换（drop-2、rootless、声部进行）
+- [ ] 和弦内 velocity 分布可视化
+- [ ] 音频延迟优化（用户可调 lookAhead）
+- [ ] Feature 告示栏（功能介绍、更新日志）
 
 ## 决定不做（第一版）
 
@@ -178,4 +94,4 @@
 - DAW 集成
 - 和声规则检查
 - 多 Clip 同时编辑
-- 手机端触屏编辑（已删除移动版，手机显示提示）
+- 手机端触屏编辑

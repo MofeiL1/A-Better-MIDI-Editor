@@ -180,7 +180,6 @@ export const PianoRoll: React.FC = () => {
         const cx = (n.startTick - scrollX) * ppt;
         const cy = size.height - (n.pitch - scrollY + 0.5) * pps;
         const tailFullW = effDur * ppt;
-        const tailH = pps * 0.6;
 
         // Full clickable area = triangle head union extension line
         const noteRight = cx + Math.max(headW, tailFullW);
