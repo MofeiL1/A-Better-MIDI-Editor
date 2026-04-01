@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Project, Note, ChordEvent, ProjectSnapshot } from '../types/model';
+import type { Project, Note, ProjectSnapshot } from '../types/model';
 import { generateId } from '../utils/id';
 import { useUiStore } from './uiStore';
 
@@ -129,11 +129,6 @@ interface ProjectStore {
   setNoteVelocity: (clipId: string, noteIds: string[], velocity: number) => void;
   setNoteVelocities: (clipId: string, velocities: Map<string, number>) => void;
   pasteNotes: (clipId: string, notes: Omit<Note, 'id'>[], atTick: number) => string[];
-
-  // Chord events
-  addChordEvent: (event: Omit<ChordEvent, 'id'>) => string;
-  updateChordEvent: (id: string, updates: Partial<Omit<ChordEvent, 'id'>>) => void;
-  deleteChordEvent: (id: string) => void;
 
   // Project-level
   loadProject: (project: Project) => void;
@@ -422,43 +417,6 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     }))};
     set({ project: newProject });
     return newIds;
-  },
-
-  addChordEvent: (eventData) => {
-    get().pushUndo();
-    const { project } = get();
-    const id = generateId();
-    set({
-      project: {
-        ...project,
-        chordEvents: [...project.chordEvents, { ...eventData, id }],
-      },
-    });
-    return id;
-  },
-
-  updateChordEvent: (id, updates) => {
-    get().pushUndo();
-    const { project } = get();
-    set({
-      project: {
-        ...project,
-        chordEvents: project.chordEvents.map((e) =>
-          e.id === id ? { ...e, ...updates } : e
-        ),
-      },
-    });
-  },
-
-  deleteChordEvent: (id) => {
-    get().pushUndo();
-    const { project } = get();
-    set({
-      project: {
-        ...project,
-        chordEvents: project.chordEvents.filter((e) => e.id !== id),
-      },
-    });
   },
 
   loadProject: (project) => {
