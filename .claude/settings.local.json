@@ -12,7 +12,9 @@
       "Bash(ls setup*)",
       "Bash(command -v bun)",
       "Bash(bun --version)",
-      "Bash(npm run:*)"
+      "Bash(npm run:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)"
     ]
   }
 }
