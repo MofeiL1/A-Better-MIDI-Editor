@@ -12,11 +12,6 @@
 
 **完整设计文档在 `CHORD_SYSTEM_DESIGN.md`（项目根目录，在 `feature/chord-data-model` 分支上，需要 cherry-pick 或手动复制过来）。** 这是经过多轮讨论确定的最终设计，务必通读。
 
-## 术语
-
-- **Group** = 将选中的音符组合为一个和弦（创建 ChordData）
-- **Ungroup** = 解散和弦，音符恢复为独立音符（删除 ChordData）
-- 代码中函数名用 `groupNotesAsChord` / `ungroupChord`，不要用 promote/demote
 
 ## 最关键的设计决策（不要改）
 
@@ -47,9 +42,9 @@
 | `CHORD_SYSTEM_DESIGN.md` | **必读** — 完整设计：数据模型、操作定义、标签命名、渲染规则 |
 | `CLAUDE.md` | 项目约定（禁止 emoji、SVG 图标、代码规范等） |
 | `src/types/model.ts` | 现有数据模型（Note, Clip, Project）。你要在这里加 Voice, ChordData |
-| `src/utils/chordAnalysis.ts` | 保留的 `detectWithFallback` — group 时用来识别和弦 |
-| `src/store/projectStore.ts` | Zustand store，你要加 groupNotesAsChord / ungroupChord |
-| `src/store/uiStore.ts` | UI 状态，你要加 selectedChordId |
+| `src/utils/chordAnalysis.ts` | 保留的和弦检测功能 — group 时用来识别和弦 |
+| `src/store/projectStore.ts` | Zustand store，需要加 group/ungroup 操作 |
+| `src/store/uiStore.ts` | UI 状态，需要加和弦选择状态 |
 | `src/components/PianoRoll/PianoRoll.tsx` | 主编排组件。ChordTrack 区域目前是空 div（~第 800 行） |
 | `src/components/PianoRoll/NoteLayer.tsx` | 音符渲染。你要在这里加和弦成员的级数标签 |
 
@@ -58,8 +53,8 @@
 **严格按顺序，每步 build 验证，每步 commit。**
 
 1. **类型** (`model.ts`) — 加 Voice, ChordData, Clip.chords
-2. **工具函数** (新建 `utils/voicing.ts`) — QUALITY_MAP, classifyVoice, getChordToneLabel, notesToChordData
-3. **Store** (`projectStore.ts`) — groupNotesAsChord, ungroupChord；(`uiStore.ts`) — selectedChordId
+2. **工具函数** (新建 `utils/voicing.ts`) — QUALITY_MAP、Voice 分类、级数标签计算、音符→和弦转换
+3. **Store** (`projectStore.ts`) — group/ungroup 操作；(`uiStore.ts`) — 和弦选择状态
 4. **ChordTrack UI** — 在 PianoRoll 的 placeholder div 里：
    - 选中 ≥2 音符时：显示检测到的和弦名 + group 图标按钮
    - 已 group 的和弦：显示和弦条 + 和弦名，选中时显示 ungroup 图标按钮
@@ -70,11 +65,11 @@
 
 - **不要一次加太多功能。** 之前尝试一次加完所有东西（types + store + UI + keyboard + playback + quality detection + ChordTrack + NoteLayer），bug 叠 bug 完全无法调试。一步一步来。
 - **NoteLayer 里 chord voices 不要单独渲染。** 和弦音符就是普通 Note，用同一个 drawNote 渲染。区别只在右侧多一个级数标签。
-- **voiceToMidi 计算必须用 root pitch class（0-11），不是 rootMidi。** rootMidi 只用来记录原始音域位置。`rootAtOct0(root)` = pitchClass + 12 是计算基准。
-- **groupNotesAsChord 时 noteIds 必须按 pitch 排序，跟 voices 一一对应。** `notesToChordData` 内部按 pitch 排序，所以 noteIds 也要用排序后的顺序。
-- **getChordToneLabel 必须根据和弦 quality 上下文决定升降号。** 设计文档 2.1 节有完整的标签命名表。dim7 的 9 半音 = "bb7"，6th chord 的 9 半音 = "6"，dom7 上 3 半音的 tension = "#9"。不能用固定的 semitone → name 映射。
+- **Voice→MIDI 计算必须用 root pitch class（0-11），不是 rootMidi。** rootMidi 只用来记录原始音域位置。pitchClass + 12 是计算基准。
+- **Group 时 noteIds 必须按 pitch 排序，跟 voices 一一对应。** 内部按 pitch 排序后再提取 noteIds。
+- **级数标签必须根据和弦 quality 上下文决定升降号。** 设计文档 2.1 节有完整的标签命名表。dim7 的 9 半音 = "bb7"，6th chord 的 9 半音 = "6"，dom7 上 3 半音的 tension = "#9"。不能用固定的 semitone → name 映射。
 - **检测只在用户选中音符时触发一次。** 不要加 useEffect 监听 notes 变化做实时检测。
-- **MIDI 导入时 Clip 要加 `chords: []`。** 看 `src/utils/midi.ts` 第 63 行。
+- **MIDI 导入时 Clip 要加 `chords: []`。** 看 `src/utils/midi.ts`。
 
 ## 构建和测试
 

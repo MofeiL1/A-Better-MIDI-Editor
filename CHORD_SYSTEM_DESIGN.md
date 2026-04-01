@@ -173,26 +173,26 @@ const QUALITY_MAP: Record<string, Record<number, number>> = {
 
 ### 4.1 Group (音符 → 和弦)
 
-**触发**：选中 ≥2 个音符 → 按 P 键 / 点击 ChordTrack 上的 group 按钮
+**触发**：选中 ≥2 个音符 → 点击 ChordTrack 上的 group 按钮
 
 **逻辑**：
 1. 按 pitch 排序选中音符
-2. 提取 pitch class → 调用 `detectWithFallback` 检测 root + quality
+2. 提取 pitch class → 检测 root + quality
 3. 失败 → 不操作
-4. 成功 → 对每个音符 `classifyVoice(pitch, root, quality)` 生成 Voice
+4. 成功 → 为每个音符生成对应的 Voice
 5. 创建 ChordData，noteIds = 音符 ID 数组（pitch 排序后的顺序）
 6. **不删除原始音符** — 只在 `clip.chords` 中添加 ChordData
 7. 记入 undo
 
 ### 4.2 Ungroup (和弦 → 音符)
 
-**触发**：选中和弦 → 按 D 键
+**触发**：选中和弦 → 点击 ChordTrack 上的 ungroup 按钮
 
 **逻辑**：仅删除 ChordData，音符保持不变。记入 undo。
 
 ### 4.3 删除和弦
 
-**触发**：选中和弦 → Delete 键
+**触发**：选中和弦 → 点击 ChordTrack 上的删除按钮
 
 **逻辑**：与 ungroup 相同 — 删除 ChordData，音符保持不变。
 
@@ -314,14 +314,14 @@ src/
 ├── types/
 │   └── model.ts          ← + Voice, ChordData, Clip.chords
 ├── utils/
-│   ├── voicing.ts         ← 新建：QUALITY_MAP, classifyVoice, getChordToneLabel, notesToChordData
-│   ├── chordAnalysis.ts   ← 瘦身后保留 detectWithFallback + 依赖函数
+│   ├── voicing.ts         ← 新建：QUALITY_MAP、Voice 分类、级数标签计算、音符→和弦转换
+│   ├── chordAnalysis.ts   ← 瘦身后保留和弦检测功能
 │   ├── midi.ts            ← 保留
 │   ├── timing.ts          ← 保留
 │   └── music.ts           ← 保留
 ├── store/
-│   ├── projectStore.ts    ← + groupNotes, ungroupChord
-│   └── uiStore.ts         ← + selectedChordId
+│   ├── projectStore.ts    ← + group/ungroup 操作
+│   └── uiStore.ts         ← + 和弦选择状态
 ├── components/PianoRoll/
 │   ├── PianoRoll.tsx      ← 大幅瘦身 + 按需检测逻辑
 │   ├── NoteLayer.tsx      ← 瘦身 + chord tone 标签（ChordData 驱动）
@@ -332,6 +332,6 @@ src/
 │   ├── Ruler.tsx          ← 保留
 │   └── PlayheadHandle.tsx ← 保留
 └── hooks/
-    ├── useKeyboard.ts     ← + P/D 快捷键
+    ├── useKeyboard.ts     ← 保留
     └── usePlayback.ts     ← 保留（不需改动）
 ```
