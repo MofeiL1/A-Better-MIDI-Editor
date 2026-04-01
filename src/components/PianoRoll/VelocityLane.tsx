@@ -78,7 +78,7 @@ export const VelocityLane: React.FC<VelocityLaneProps> = ({
     for (let i = sorted.length - 1; i >= 0; i--) {
       const note = sorted[i];
       const x = barX(note);
-      const bw = Math.max(note.duration * pixelsPerTick, BAR_WIDTH);
+      const bw = Math.max((note.duration ?? 0) * pixelsPerTick, BAR_WIDTH);
       if (mx < x - 1 || mx > x + bw + 1) continue;
       const topY = barTopY(note.velocity);
       if (my >= topY && my <= height) return note;
@@ -132,7 +132,7 @@ export const VelocityLane: React.FC<VelocityLaneProps> = ({
     // but still below notes with genuinely lower velocity.
     const activeId = velocityDragNoteId || hoveredNoteId;
     const sortedNotes = [...notes]
-      .filter((n) => n.startTick + n.duration >= minVisibleTick && n.startTick <= maxVisibleTick)
+      .filter((n) => n.startTick + (n.duration ?? 0) >= minVisibleTick && n.startTick <= maxVisibleTick)
       .sort((a, b) => {
         if (a.startTick !== b.startTick) return a.startTick - b.startTick;
         if (a.velocity === b.velocity) {
@@ -158,7 +158,7 @@ export const VelocityLane: React.FC<VelocityLaneProps> = ({
       const x = Math.round(barX(note));
       const topY = barTopY(note.velocity);
       const barH = height - topY;
-      const bw = Math.max(Math.round(note.duration * pixelsPerTick), BAR_WIDTH);
+      const bw = Math.max(Math.round((note.duration ?? 0) * pixelsPerTick), BAR_WIDTH);
 
       // Bar body — no gap between adjacent notes
       ctx.fillStyle = velBarColor(note.velocity, isSelected, isHighlighted || isHovered);

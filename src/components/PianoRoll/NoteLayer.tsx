@@ -1,6 +1,5 @@
 import React, { useRef, useEffect } from 'react';
 import type { Note } from '../../types/model';
-import { pitchClass } from '../../utils/music';
 import { useUiStore } from '../../store/uiStore';
 
 interface NoteLayerProps {
@@ -12,14 +11,19 @@ interface NoteLayerProps {
   pixelsPerSemitone: number;
   notes: Note[];
   selectedNoteIds: Set<string>;
+  /** Map from note ID to effective duration (for null-duration notes) */
+  nullDurations?: Map<string, number>;
+  /** Semi-transparent preview showing where a dot will be placed */
+  dotPreview?: { tick: number; pitch: number } | null;
   /** Ghost notes shown during drag at original positions */
-  ghostNotes?: { pitch: number; startTick: number; duration: number; velocity: number }[];
+  ghostNotes?: { pitch: number; startTick: number; duration: number | null; velocity: number }[];
   /** If true, ghost notes look like real notes (semi-transparent) for copy mode */
   ghostCopyMode?: boolean;
   cursor?: string;
   onMouseDown?: (e: React.MouseEvent<HTMLCanvasElement>) => void;
   onMouseMove?: (e: React.MouseEvent<HTMLCanvasElement>) => void;
   onMouseLeave?: (e: React.MouseEvent<HTMLCanvasElement>) => void;
+  onContextMenu?: (e: React.MouseEvent<HTMLCanvasElement>) => void;
 }
 
 // Logic Pro velocity color: purple(low) → blue → green → yellow → orange → red(high)
@@ -40,7 +44,15 @@ function noteColor(velocity: number, selected: boolean, hovered: boolean): strin
   return `hsl(${hue}, 65%, ${30 + v * 18}%)`;
 }
 
-const NOTE_NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+function noteColorRgba(velocity: number, selected: boolean, hovered: boolean, alpha: number): string {
+  const hue = velocityToHue(velocity);
+  const v = velocity / 127;
+  let s: number, l: number;
+  if (selected) { s = 85; l = 68; }
+  else if (hovered) { s = 70; l = 38 + v * 18; }
+  else { s = 65; l = 30 + v * 18; }
+  return `hsla(${hue}, ${s}%, ${l}%, ${alpha})`;
+}
 
 export const NoteLayer: React.FC<NoteLayerProps> = ({
   width,
@@ -51,12 +63,15 @@ export const NoteLayer: React.FC<NoteLayerProps> = ({
   pixelsPerSemitone,
   notes,
   selectedNoteIds,
+  nullDurations,
+  dotPreview,
   ghostNotes,
   ghostCopyMode,
   cursor = 'crosshair',
   onMouseDown,
   onMouseMove,
   onMouseLeave,
+  onContextMenu,
 }) => {
   const velocityDragNoteId = useUiStore((s) => s.velocityDragNoteId);
   const hoveredNoteId = useUiStore((s) => s.hoveredNoteId);
@@ -79,13 +94,21 @@ export const NoteLayer: React.FC<NoteLayerProps> = ({
     const minVisiblePitch = scrollY - 1;
     const maxVisiblePitch = scrollY + Math.ceil(height / pixelsPerSemitone) + 1;
 
-    // Draw unselected notes first, then selected on top
+    const activeHighlightId = velocityDragNoteId || hoveredNoteId;
+    const headH = pixelsPerSemitone; // equilateral: side = track height
+    const headW = headH * Math.sqrt(3) / 2; // equilateral triangle width
+    const headR = Math.max(1, headH * 0.15); // visible rounded corners
+
+    // Separate selected/unselected for draw order
     const unselected: Note[] = [];
     const selected: Note[] = [];
     for (const note of notes) {
-      const noteEnd = note.startTick + note.duration;
-      if (noteEnd < minVisibleTick || note.startTick > maxVisibleTick) continue;
       if (note.pitch < minVisiblePitch || note.pitch > maxVisiblePitch) continue;
+      const effectiveDur = note.duration !== null
+        ? note.duration
+        : (nullDurations?.get(note.id) ?? 0);
+      const noteEnd = note.startTick + effectiveDur;
+      if (noteEnd < minVisibleTick || note.startTick > maxVisibleTick) continue;
       if (selectedNoteIds.has(note.id)) {
         selected.push(note);
       } else {
@@ -93,119 +116,89 @@ export const NoteLayer: React.FC<NoteLayerProps> = ({
       }
     }
 
-    const activeHighlightId = velocityDragNoteId || hoveredNoteId;
-
     const drawNote = (note: Note, isSelected: boolean) => {
-      const x = (note.startTick - scrollX) * pixelsPerTick;
-      const w = note.duration * pixelsPerTick;
-      const y = height - (note.pitch - scrollY + 1) * pixelsPerSemitone;
-      const h = pixelsPerSemitone;
+      const cx = (note.startTick - scrollX) * pixelsPerTick;
+      const cy = height - (note.pitch - scrollY + 0.5) * pixelsPerSemitone;
       const isHovered = note.id === activeHighlightId;
-
+      const isNullDuration = note.duration === null;
+      const effectiveDur = isNullDuration
+        ? (nullDurations?.get(note.id) ?? 0)
+        : note.duration!;
       const color = noteColor(note.velocity, isSelected, isHovered);
 
-      // Note body — Logic Pro style: rounded rect with 1px gap
-      const noteX = x + 0.5;
-      const noteY = y + 0.5;
-      const noteW = Math.max(w - 1, 2);
-      const noteH = Math.max(h - 1, 2);
-      const radius = Math.min(2, noteH / 4, noteW / 4);
+      // ─── Extension line (drawn first, triangle head covers the start) ─────────
+      if (effectiveDur > 0) {
+        const tailFullW = effectiveDur * pixelsPerTick;
+        const tailH = pixelsPerSemitone * 0.6;
+        const tailAlpha = isNullDuration ? 0.3 : 0.85;
+        const tailColor = noteColorRgba(note.velocity, isSelected, isHovered, tailAlpha);
+
+        ctx.fillStyle = tailColor;
+        ctx.beginPath();
+        ctx.roundRect(cx, cy - tailH / 2, tailFullW, tailH, tailH * 0.2);
+        ctx.fill();
+      }
+
+      // ─── Triangle head (right-pointing, slight rounding) ──────────────────────
+      const x0 = cx;
+      const x1 = cx + headW;
+      const yTop = cy - headH / 2;
+      const yBot = cy + headH / 2;
 
       ctx.beginPath();
-      ctx.roundRect(noteX, noteY, noteW, noteH, radius);
+      // Three corners: top-left (x0,yTop), tip (x1,cy), bottom-left (x0,yBot)
+      ctx.moveTo(x0, yTop + headR);
+      ctx.arcTo(x0, yTop, x1, cy, headR);   // top-left corner
+      ctx.arcTo(x1, cy, x0, yBot, headR);    // right tip
+      ctx.arcTo(x0, yBot, x0, yTop, headR);  // bottom-left corner
+      ctx.closePath();
       ctx.fillStyle = color;
       ctx.fill();
 
-      // Top edge highlight — subtle 3D feel like Logic
-      const grad = ctx.createLinearGradient(noteX, noteY, noteX, noteY + noteH);
+      // Subtle top highlight gradient
+      const grad = ctx.createLinearGradient(x0, yTop, x0, yBot);
       grad.addColorStop(0, 'rgba(255, 255, 255, 0.15)');
-      grad.addColorStop(0.15, 'rgba(255, 255, 255, 0.03)');
-      grad.addColorStop(0.85, 'rgba(0, 0, 0, 0)');
-      grad.addColorStop(1, 'rgba(0, 0, 0, 0.15)');
+      grad.addColorStop(0.4, 'rgba(255, 255, 255, 0)');
+      grad.addColorStop(1, 'rgba(0, 0, 0, 0.08)');
       ctx.fillStyle = grad;
       ctx.fill();
-
-      // Velocity line inside note (Logic Pro signature)
-      if (noteW > 6) {
-        const velRatio = note.velocity / 127;
-        const lineW = (noteW - 4) * velRatio;
-        const lineY = noteY + noteH * 0.65;
-        ctx.strokeStyle = isSelected
-          ? 'rgba(255, 255, 255, 0.5)'
-          : 'rgba(255, 255, 255, 0.25)';
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.moveTo(noteX + 2, lineY);
-        ctx.lineTo(noteX + 2 + lineW, lineY);
-        ctx.stroke();
-      }
-
-      // Border
-      if (isSelected) {
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.6)';
-        ctx.lineWidth = 1.5;
-        ctx.beginPath();
-        ctx.roundRect(noteX, noteY, noteW, noteH, radius);
-        ctx.stroke();
-      } else if (isHovered) {
-        // Hover: lighter border, no glow — subtler than selected
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.35)';
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.roundRect(noteX, noteY, noteW, noteH, radius);
-        ctx.stroke();
-      } else {
-        // Subtle dark border for unselected (Logic Pro feel)
-        ctx.strokeStyle = 'rgba(0, 0, 0, 0.4)';
-        ctx.lineWidth = 0.5;
-        ctx.beginPath();
-        ctx.roundRect(noteX, noteY, noteW, noteH, radius);
-        ctx.stroke();
-      }
-
-      // Note name label (left side)
-      if (noteW > 24 && noteH >= 11) {
-        ctx.font = `500 ${Math.min(10, noteH - 3)}px -apple-system, "SF Pro Text", "Helvetica Neue", sans-serif`;
-        const name = NOTE_NAMES[pitchClass(note.pitch)];
-        ctx.fillStyle = isSelected
-          ? 'rgba(255, 255, 255, 0.9)'
-          : 'rgba(255, 255, 255, 0.7)';
-        ctx.fillText(name, noteX + 3, noteY + noteH * 0.45 + 1);
-      }
 
     };
 
     // Ghost notes — drawn first so they appear behind real notes
     if (ghostNotes && ghostNotes.length > 0) {
       for (const g of ghostNotes) {
-        const nx = (g.startTick - scrollX) * pixelsPerTick;
-        const nw = g.duration * pixelsPerTick;
-        const noteH = pixelsPerSemitone;
-        const ny = height - (g.pitch - scrollY + 1) * noteH;
-        if (nx + nw < 0 || nx > width || ny + noteH < 0 || ny > height) continue;
+        const gcx = (g.startTick - scrollX) * pixelsPerTick;
+        const gcy = height - (g.pitch - scrollY + 0.5) * pixelsPerSemitone;
+        if (gcx > width || gcy + pixelsPerSemitone < 0 || gcy > height) continue;
+
+        // Ghost triangle head
+        const gx0 = gcx;
+        const gx1 = gcx + headW;
+        const gyTop = gcy - headH / 2;
+        const gyBot = gcy + headH / 2;
+        const drawGhostTriangle = () => {
+          ctx.beginPath();
+          ctx.moveTo(gx0, gyTop + headR);
+          ctx.arcTo(gx0, gyTop, gx1, gcy, headR);
+          ctx.arcTo(gx1, gcy, gx0, gyBot, headR);
+          ctx.arcTo(gx0, gyBot, gx0, gyTop, headR);
+          ctx.closePath();
+        };
 
         if (ghostCopyMode) {
-          // Copy mode: looks like a real note but semi-transparent
-          const hue = velocityToHue(g.velocity);
           ctx.globalAlpha = 0.4;
+          const hue = velocityToHue(g.velocity);
           ctx.fillStyle = `hsl(${hue}, 65%, ${30 + (g.velocity / 127) * 18}%)`;
-          ctx.beginPath();
-          ctx.roundRect(nx, ny + 1, nw, noteH - 2, 3);
+          drawGhostTriangle();
           ctx.fill();
-          ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
-          ctx.lineWidth = 1;
-          ctx.beginPath();
-          ctx.roundRect(nx, ny + 1, nw, noteH - 2, 3);
-          ctx.stroke();
           ctx.globalAlpha = 1;
         } else {
-          // Move mode: faint outline only
-          ctx.fillStyle = 'rgba(100, 160, 255, 0.1)';
-          ctx.strokeStyle = 'rgba(100, 160, 255, 0.25)';
+          ctx.fillStyle = 'rgba(100, 160, 255, 0.15)';
+          ctx.strokeStyle = 'rgba(100, 160, 255, 0.3)';
           ctx.lineWidth = 1;
           ctx.setLineDash([3, 3]);
-          ctx.beginPath();
-          ctx.roundRect(nx, ny + 1, nw, noteH - 2, 3);
+          drawGhostTriangle();
           ctx.fill();
           ctx.stroke();
           ctx.setLineDash([]);
@@ -216,7 +209,28 @@ export const NoteLayer: React.FC<NoteLayerProps> = ({
     for (const note of unselected) drawNote(note, false);
     for (const note of selected) drawNote(note, true);
 
-  }, [width, height, scrollX, scrollY, pixelsPerTick, pixelsPerSemitone, notes, selectedNoteIds, velocityDragNoteId, hoveredNoteId, ghostNotes, ghostCopyMode]);
+    // ─── Preview (ghost triangle at snapped position) ────────
+    if (dotPreview) {
+      const pcx = (dotPreview.tick - scrollX) * pixelsPerTick;
+      const pcy = height - (dotPreview.pitch - scrollY + 0.5) * pixelsPerSemitone;
+      const px0 = pcx;
+      const px1 = pcx + headW;
+      const pyTop = pcy - headH / 2;
+      const pyBot = pcy + headH / 2;
+
+      ctx.globalAlpha = 0.35;
+      ctx.fillStyle = noteColor(80, false, false);
+      ctx.beginPath();
+      ctx.moveTo(px0, pyTop + headR);
+      ctx.arcTo(px0, pyTop, px1, pcy, headR);
+      ctx.arcTo(px1, pcy, px0, pyBot, headR);
+      ctx.arcTo(px0, pyBot, px0, pyTop, headR);
+      ctx.closePath();
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+
+  }, [width, height, scrollX, scrollY, pixelsPerTick, pixelsPerSemitone, notes, selectedNoteIds, velocityDragNoteId, hoveredNoteId, ghostNotes, ghostCopyMode, nullDurations, dotPreview]);
 
   return (
     <canvas
@@ -225,6 +239,7 @@ export const NoteLayer: React.FC<NoteLayerProps> = ({
       onMouseDown={onMouseDown}
       onMouseMove={onMouseMove}
       onMouseLeave={onMouseLeave}
+      onContextMenu={onContextMenu}
     />
   );
 };

@@ -4,8 +4,8 @@ import type { ToolMode, SnapResolution } from '../../types/ui';
 
 const TOOLS: { mode: ToolMode; label: string; shortcut: string }[] = [
   { mode: 'select', label: 'Pointer', shortcut: '1' },
-  { mode: 'draw', label: 'Pencil', shortcut: '2' },
-  { mode: 'erase', label: 'Eraser', shortcut: '3' },
+  { mode: 'flex', label: 'Flex', shortcut: '2' },
+  { mode: 'draw', label: 'Pencil', shortcut: '3' },
 ];
 
 const SNAP_OPTIONS: { value: SnapResolution; label: string }[] = [

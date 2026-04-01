@@ -33,6 +33,9 @@ interface UiStore {
   // Draw tool
   lastDrawnDuration: number; // ticks, inherited by next pencil note
 
+  // Dot tool duration preset (Q/W/E/R/T keys)
+  dotPresetDuration: number | null; // null = no preset (auto legato), number = explicit ticks
+
   // Settings
   useJazzSymbols: boolean;
 
@@ -52,13 +55,14 @@ interface UiStore {
   setSamplerReady: (v: boolean) => void;
   setClipboard: (notes: Note[]) => void;
   setLastDrawnDuration: (d: number) => void;
+  setDotPresetDuration: (d: number | null) => void;
   setVelocityDragNoteId: (id: string | null) => void;
   setHoveredNoteId: (id: string | null) => void;
   setUseJazzSymbols: (v: boolean) => void;
 }
 
 export const useUiStore = create<UiStore>((set) => ({
-  tool: 'select',
+  tool: 'flex',
   viewport: {
     scrollX: 0,
     scrollY: 48, // Start viewing around C3-C5 range
@@ -78,6 +82,7 @@ export const useUiStore = create<UiStore>((set) => ({
   samplerReady: false,
   clipboard: [],
   lastDrawnDuration: 480, // quarter note at 480 tpb
+  dotPresetDuration: null,
   velocityDragNoteId: null,
   hoveredNoteId: null,
   useJazzSymbols: false,
@@ -105,6 +110,7 @@ export const useUiStore = create<UiStore>((set) => ({
   setSamplerReady: (v) => set({ samplerReady: v }),
   setClipboard: (notes) => set({ clipboard: notes }),
   setLastDrawnDuration: (d) => set({ lastDrawnDuration: d }),
+  setDotPresetDuration: (d) => set({ dotPresetDuration: d }),
   setVelocityDragNoteId: (id) => set({ velocityDragNoteId: id }),
   setHoveredNoteId: (id) => set({ hoveredNoteId: id }),
   setUseJazzSymbols: (v) => set({ useJazzSymbols: v }),

@@ -72,7 +72,7 @@ export type Note = {
   id: string;
   pitch: number; // 0–127, 60 = C4
   startTick: number;
-  duration: number; // 单位: tick
+  duration: number | null; // 单位: tick, null = 未确认长度（auto legato）
   velocity: number; // 0–127
   channel: number;
   pitchBend: BendPoint[];

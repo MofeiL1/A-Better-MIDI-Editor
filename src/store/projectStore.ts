@@ -1,80 +1,16 @@
 import { create } from 'zustand';
 import type { Project, Note, ProjectSnapshot } from '../types/model';
+import { getEffectiveDuration } from '../utils/noteDuration';
 import { generateId } from '../utils/id';
 import { useUiStore } from './uiStore';
 
 const MAX_UNDO = 50;
 
-/**
- * Generate demo notes: "Blue Bossa" (Kenny Dorham) — 16-bar jazz standard.
- * Showcases key modulation detection (Cm → Db → Cm), ii-V-I patterns,
- * chord analysis, and resolution arrows.
- *
- * Progression:
- *  1. Cm7     (i in Cm)
- *  2. Cm7     (i)
- *  3. Fm7     (iv)
- *  4. Fm7     (iv)
- *  5. Dm7b5   (ii in Cm)
- *  6. G7      (V — ii-V)
- *  7. Cm7     (i — V→i resolution)
- *  8. Cm7     (i)
- *  9. Ebm7    (ii in Db — modulation!)
- * 10. Ab7     (V in Db — ii→V)
- * 11. Dbmaj7  (I in Db — V→I resolution)
- * 12. Dbmaj7  (I)
- * 13. Dm7b5   (ii in Cm — back to Cm!)
- * 14. G7      (V — ii→V)
- * 15. Cm7     (i — V→i resolution)
- * 16. Cm7     (i)
- */
-function generateDemoNotes(): Note[] {
-  const TPB = 480; // ticks per beat
-  const BAR = TPB * 4; // ticks per bar (4/4)
-  const DUR = BAR; // whole-note duration
-
-  // Each chord: [barIndex, pitches[]]
-  const chords: [number, number[]][] = [
-    [0,  [48, 51, 55, 58]],  // Cm7:    C3 Eb3 G3 Bb3
-    [1,  [48, 51, 55, 58]],  // Cm7:    C3 Eb3 G3 Bb3
-    [2,  [53, 56, 60, 63]],  // Fm7:    F3 Ab3 C4 Eb4
-    [3,  [53, 56, 60, 63]],  // Fm7:    F3 Ab3 C4 Eb4
-    [4,  [50, 53, 56, 60]],  // Dm7b5:  D3 F3 Ab3 C4
-    [5,  [43, 47, 50, 53]],  // G7:     G2 B2 D3 F3
-    [6,  [48, 51, 55, 58]],  // Cm7:    C3 Eb3 G3 Bb3
-    [7,  [48, 51, 55, 58]],  // Cm7:    C3 Eb3 G3 Bb3
-    [8,  [51, 54, 58, 61]],  // Ebm7:   Eb3 Gb3 Bb3 Db4
-    [9,  [44, 48, 51, 54]],  // Ab7:    Ab2 C3 Eb3 Gb3
-    [10, [49, 53, 56, 60]],  // Dbmaj7: Db3 F3 Ab3 C4
-    [11, [49, 53, 56, 60]],  // Dbmaj7: Db3 F3 Ab3 C4
-    [12, [50, 53, 56, 60]],  // Dm7b5:  D3 F3 Ab3 C4
-    [13, [43, 47, 50, 53]],  // G7:     G2 B2 D3 F3
-    [14, [48, 51, 55, 58]],  // Cm7:    C3 Eb3 G3 Bb3
-    [15, [48, 51, 55, 58]],  // Cm7:    C3 Eb3 G3 Bb3
-  ];
-
-  const notes: Note[] = [];
-  for (const [bar, pitches] of chords) {
-    for (const pitch of pitches) {
-      notes.push({
-        id: generateId(),
-        pitch,
-        startTick: bar * BAR,
-        duration: DUR,
-        velocity: 80,
-        channel: 0,
-        pitchBend: [],
-      });
-    }
-  }
-  return notes;
-}
-
 function createDefaultProject(): Project {
   const trackId = generateId();
   const clipId = generateId();
   return {
-    name: 'Blue Bossa',
+    name: 'Untitled',
     ticksPerBeat: 480,
     tracks: [
       {
@@ -85,7 +21,7 @@ function createDefaultProject(): Project {
           {
             id: clipId,
             startTick: 0,
-            notes: generateDemoNotes(),
+            notes: [],
           },
         ],
         muted: false,
@@ -94,7 +30,7 @@ function createDefaultProject(): Project {
     ],
     tempoChanges: [{ tick: 0, bpm: 120 }],
     timeSignatureChanges: [{ tick: 0, numerator: 4, denominator: 4 }],
-    keyChanges: [{ tick: 0, key: 'C minor' }],
+    keyChanges: [{ tick: 0, key: 'C major' }],
     chordEvents: [],
     history: [],
     redoStack: [],
@@ -129,6 +65,11 @@ interface ProjectStore {
   setNoteVelocity: (clipId: string, noteIds: string[], velocity: number) => void;
   setNoteVelocities: (clipId: string, velocities: Map<string, number>) => void;
   pasteNotes: (clipId: string, notes: Omit<Note, 'id'>[], atTick: number) => string[];
+
+  // Duration confirmation
+  confirmDuration: (clipId: string, noteIds: string[]) => void;
+  clearDuration: (clipId: string, noteIds: string[]) => void;
+  setNoteDuration: (clipId: string, noteIds: string[], duration: number) => void;
 
   // Project-level
   loadProject: (project: Project) => void;
@@ -246,20 +187,17 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     const { project } = get();
     const idSet = new Set(noteIds);
 
-    // Find the selected notes to clamp the delta for the whole group
     const clip = project.tracks.flatMap((t) => t.clips).find((c) => c.id === clipId);
     if (!clip) return;
     const selected = clip.notes.filter((n) => idSet.has(n.id));
     if (selected.length === 0) return;
 
-    // Clamp deltaTick: no note should go below startTick 0
     let clampedDeltaTick = deltaTick;
     const minStart = Math.min(...selected.map((n) => n.startTick));
     if (minStart + clampedDeltaTick < 0) {
       clampedDeltaTick = -minStart;
     }
 
-    // Clamp deltaPitch: no note should go below 0 or above 127
     let clampedDeltaPitch = deltaPitch;
     const minPitch = Math.min(...selected.map((n) => n.pitch));
     const maxPitch = Math.max(...selected.map((n) => n.pitch));
@@ -306,7 +244,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
               ...c,
               notes: c.notes.map((n) =>
                 idSet.has(n.id)
-                  ? { ...n, duration: Math.max(1, n.duration + deltaDuration) }
+                  ? { ...n, duration: Math.max(1, (n.duration ?? 0) + deltaDuration) }
                   : n
               ),
             }
@@ -328,6 +266,11 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
               ...c,
               notes: c.notes.map((n) => {
                 if (!idSet.has(n.id)) return n;
+                if (n.duration === null) {
+                  // Null-duration: just move startTick
+                  const newStart = Math.max(0, n.startTick + deltaTick);
+                  return { ...n, startTick: newStart };
+                }
                 const newStart = Math.max(0, n.startTick + deltaTick);
                 const actualDelta = newStart - n.startTick;
                 const newDuration = Math.max(1, n.duration - actualDelta);
@@ -400,7 +343,6 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     if (notes.length === 0) return [];
     get().pushUndo();
     const { project } = get();
-    // Align earliest note to atTick
     const earliestTick = Math.min(...notes.map((n) => n.startTick));
     const offset = atTick - earliestTick;
     const newIds: string[] = [];
@@ -419,8 +361,106 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     return newIds;
   },
 
+  // ─── Duration confirmation ─────────────────────────────
+
+  confirmDuration: (clipId, noteIds) => {
+    get().pushUndo();
+    const { project } = get();
+    const idSet = new Set(noteIds);
+    const clip = project.tracks.flatMap((t) => t.clips).find((c) => c.id === clipId);
+    if (!clip) return;
+    const allNotes = clip.notes;
+    const ts = project.timeSignatureChanges[0] ?? { numerator: 4, denominator: 4 };
+    const ticksPerMeasure = project.ticksPerBeat * ts.numerator * (4 / ts.denominator);
+
+    const newProject = { ...project, tracks: project.tracks.map((t) => ({
+      ...t,
+      clips: t.clips.map((c) =>
+        c.id === clipId
+          ? {
+              ...c,
+              notes: c.notes.map((n) => {
+                if (!idSet.has(n.id) || n.duration !== null) return n;
+                return { ...n, duration: getEffectiveDuration(n, allNotes, ticksPerMeasure) };
+              }),
+            }
+          : c
+      ),
+    }))};
+    set({ project: newProject });
+  },
+
+  clearDuration: (clipId, noteIds) => {
+    get().pushUndo();
+    const { project } = get();
+    const idSet = new Set(noteIds);
+    const newProject = { ...project, tracks: project.tracks.map((t) => ({
+      ...t,
+      clips: t.clips.map((c) =>
+        c.id === clipId
+          ? {
+              ...c,
+              notes: c.notes.map((n) =>
+                idSet.has(n.id) && n.duration !== null ? { ...n, duration: null } : n
+              ),
+            }
+          : c
+      ),
+    }))};
+    set({ project: newProject });
+  },
+
+  setNoteDuration: (clipId, noteIds, duration) => {
+    get().pushUndo();
+    const { project } = get();
+    const idSet = new Set(noteIds);
+    const newProject = { ...project, tracks: project.tracks.map((t) => ({
+      ...t,
+      clips: t.clips.map((c) =>
+        c.id === clipId
+          ? {
+              ...c,
+              notes: c.notes.map((n) =>
+                idSet.has(n.id) ? { ...n, duration } : n
+              ),
+            }
+          : c
+      ),
+    }))};
+    set({ project: newProject });
+  },
+
+  // ─── Project-level ─────────────────────────────────────
+
   loadProject: (project) => {
-    set({ project });
+    // Migrate: remove old dots array if present, convert to null-duration notes
+    const migrated = {
+      ...project,
+      tracks: project.tracks.map((t) => ({
+        ...t,
+        clips: t.clips.map((c) => {
+          const clip = c as Record<string, unknown>;
+          const existingNotes = (clip.notes as Note[]) ?? [];
+          // Migrate old dots to null-duration notes
+          const oldDots = (clip.dots as Array<{ id: string; pitch: number; startTick: number; velocity: number }>) ?? [];
+          const migratedDots: Note[] = oldDots.map((d) => ({
+            id: d.id,
+            pitch: d.pitch,
+            startTick: d.startTick,
+            duration: null,
+            velocity: d.velocity,
+            channel: 0,
+            pitchBend: [],
+          }));
+          return {
+            id: c.id,
+            startTick: c.startTick,
+            notes: [...existingNotes, ...migratedDots],
+          };
+        }),
+      })),
+    };
+    set({ project: migrated });
   },
 
   setProjectName: (name) => {

@@ -1,4 +1,4 @@
-export type ToolMode = 'select' | 'draw' | 'erase';
+export type ToolMode = 'select' | 'flex' | 'draw';
 
 export type Viewport = {
   scrollX: number; // in ticks

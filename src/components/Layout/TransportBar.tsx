@@ -4,7 +4,6 @@ import { useUiStore } from '../../store/uiStore';
 import { usePlayback } from '../../hooks/usePlayback';
 import { parseMidiTracks, buildProjectFromMidi, exportMidi } from '../../utils/midi';
 import { SettingsPanel } from './SettingsPanel';
-import type { MidiTrackInfo } from '../../utils/midi';
 import type { Midi } from '@tonejs/midi';
 
 const btnStyle: React.CSSProperties = {
@@ -47,7 +46,6 @@ export const TransportBar: React.FC = () => {
 
   // Track picker state for multi-track MIDI import
   const [trackPicker, setTrackPicker] = useState<{
-    tracks: MidiTrackInfo[];
     midi: Midi;
     fileName: string;
     selected: Set<number>;
@@ -80,17 +78,19 @@ export const TransportBar: React.FC = () => {
     const file = e.target.files?.[0];
     if (!file) return;
     try {
-      const { midi, tracks } = await parseMidiTracks(file);
-      if (tracks.length <= 1) {
+      const { midi } = await parseMidiTracks(file);
+      const tracksWithNotes = midi.tracks
+        .map((t, i) => ({ track: t, index: i }))
+        .filter(({ track }) => track.notes.length > 0);
+      if (tracksWithNotes.length <= 1) {
         // Single track (or none) — import directly
         finishImport(buildProjectFromMidi(midi, file.name));
       } else {
         // Multiple tracks — show picker
         setTrackPicker({
-          tracks,
           midi,
           fileName: file.name,
-          selected: new Set(tracks.map((t) => t.index)),
+          selected: new Set(tracksWithNotes.map(({ index }) => index)),
         });
       }
     } catch (err) {
@@ -452,30 +452,33 @@ export const TransportBar: React.FC = () => {
               Select tracks to import
             </div>
             <div style={{ maxHeight: 300, overflowY: 'auto' }}>
-              {trackPicker.tracks.map((t) => (
-                <label key={t.index} style={{
-                  display: 'flex', alignItems: 'center', gap: 8, padding: '6px 4px',
-                  cursor: 'pointer', borderRadius: 4,
-                  backgroundColor: trackPicker.selected.has(t.index) ? 'rgba(255,255,255,0.05)' : 'transparent',
-                }}>
-                  <input
-                    type="checkbox"
-                    checked={trackPicker.selected.has(t.index)}
-                    onChange={() => {
-                      const next = new Set(trackPicker.selected);
-                      if (next.has(t.index)) next.delete(t.index); else next.add(t.index);
-                      setTrackPicker({ ...trackPicker, selected: next });
-                    }}
-                    style={{ accentColor: '#6af', colorScheme: 'dark' }}
-                  />
-                  <span style={{ flex: 1, fontSize: 12 }}>
-                    {t.name}
-                    <span style={{ color: '#888', marginLeft: 6 }}>
-                      {t.noteCount} notes · {t.instrument}
+              {trackPicker.midi.tracks.map((t, index) => {
+                if (t.notes.length === 0) return null;
+                return (
+                  <label key={index} style={{
+                    display: 'flex', alignItems: 'center', gap: 8, padding: '6px 4px',
+                    cursor: 'pointer', borderRadius: 4,
+                    backgroundColor: trackPicker.selected.has(index) ? 'rgba(255,255,255,0.05)' : 'transparent',
+                  }}>
+                    <input
+                      type="checkbox"
+                      checked={trackPicker.selected.has(index)}
+                      onChange={() => {
+                        const next = new Set(trackPicker.selected);
+                        if (next.has(index)) next.delete(index); else next.add(index);
+                        setTrackPicker({ ...trackPicker, selected: next });
+                      }}
+                      style={{ accentColor: '#6af', colorScheme: 'dark' }}
+                    />
+                    <span style={{ flex: 1, fontSize: 12 }}>
+                      {t.name || `Track ${index + 1}`}
+                      <span style={{ color: '#888', marginLeft: 6 }}>
+                        {t.notes.length} notes · {t.instrument?.name ?? 'unknown'}
+                      </span>
                     </span>
-                  </span>
-                </label>
-              ))}
+                  </label>
+                );
+              })}
             </div>
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 14 }}>
               <button

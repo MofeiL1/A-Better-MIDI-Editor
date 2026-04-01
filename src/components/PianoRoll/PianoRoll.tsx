@@ -5,10 +5,12 @@ import { PianoKeys } from './PianoKeys';
 import { VelocityLane } from './VelocityLane';
 import { Ruler, RULER_HEIGHT } from './Ruler';
 import { PlayheadHandle, HANDLE_HEIGHT } from './PlayheadHandle';
+import { ToolWheel } from './ToolWheel';
 import { useProjectStore } from '../../store/projectStore';
 import { useUiStore } from '../../store/uiStore';
 import { usePreviewNote } from '../../hooks/usePreviewNote';
 import { pixelToTick, yToPitch, snapTick, getSnapTicksFromDivision, getSmartSnapTicks, tickToPixel, tickToSeconds } from '../../utils/timing';
+import { computeNullDurations, getEffectiveDuration } from '../../utils/noteDuration';
 import type { Note } from '../../types/model';
 
 const DEFAULT_VEL_HEIGHT = 80;
@@ -32,12 +34,14 @@ export const PianoRoll: React.FC = () => {
   const sizeRef = useRef(size);
   sizeRef.current = size;
   const [velHeight, setVelHeight] = useState(DEFAULT_VEL_HEIGHT);
-  const [cursor, setCursor] = useState<string>(PENCIL_CURSOR);
+  const [cursor, setCursor] = useState<string>('default');
   const [selectBox, setSelectBox] = useState<SelectBox>(null);
   const [, setDrawingNoteId] = useState<string | null>(null);
   const [modifierKeys, setModifierKeys] = useState<{ shift: boolean; cmdCtrl: boolean }>({ shift: false, cmdCtrl: false });
-  const [ghostNotes, setGhostNotes] = useState<{ pitch: number; startTick: number; duration: number; velocity: number }[]>([]);
+  const [ghostNotes, setGhostNotes] = useState<{ pitch: number; startTick: number; duration: number | null; velocity: number }[]>([]);
   const [ghostCopyMode, setGhostCopyMode] = useState(false);
+  const [dotPreview, setDotPreview] = useState<{ tick: number; pitch: number } | null>(null);
+  const [toolWheel, setToolWheel] = useState<{ x: number; y: number } | null>(null);
 
   const project = useProjectStore((s) => s.project);
   const addNote = useProjectStore((s) => s.addNote);
@@ -47,6 +51,7 @@ export const PianoRoll: React.FC = () => {
   const trimNoteStart = useProjectStore((s) => s.trimNoteStart);
   const deleteNotes = useProjectStore((s) => s.deleteNotes);
   const pasteNotes = useProjectStore((s) => s.pasteNotes);
+  const confirmDuration = useProjectStore((s) => s.confirmDuration);
   const setNoteVelocity = useProjectStore((s) => s.setNoteVelocity);
   const beginDrag = useProjectStore((s) => s.beginDrag);
   const endDrag = useProjectStore((s) => s.endDrag);
@@ -55,8 +60,8 @@ export const PianoRoll: React.FC = () => {
   const {
     tool, viewport, selectedNoteIds, snapDivision,
     activeClipId, playheadTick, isPlaying,
-    lastDrawnDuration,
-    setViewport, setSelectedNoteIds, clearSelection,
+    lastDrawnDuration, dotPresetDuration,
+    setTool, setViewport, setSelectedNoteIds, clearSelection,
     setActiveClip, setActiveTrack, setPlayheadTick,
     setLastDrawnDuration,
   } = useUiStore();
@@ -94,7 +99,7 @@ export const PianoRoll: React.FC = () => {
   }, [containerSize, velHeight]);
 
   // Track modifier keys for temporary tool switching
-  // Pencil + Shift → Pointer; Pointer + Ctrl/Cmd → Pencil
+  // Dot/Pencil + Ctrl/Cmd → temporarily becomes Pointer
   const isMac = navigator.platform.toUpperCase().includes('MAC');
   useEffect(() => {
     const update = (e: KeyboardEvent) => {
@@ -119,12 +124,20 @@ export const PianoRoll: React.FC = () => {
   }, [isMac]);
 
   // Compute effective tool: modifier keys temporarily override base tool
+  // Ctrl/Cmd held in dot or pencil mode → temporarily act as pointer (select)
   // Mid-drag safety: drag handlers use dragState.type, not tool, so switching is harmless
   const effectiveTool = (() => {
-    if (tool === 'draw' && modifierKeys.shift) return 'select' as const;
-    if (tool === 'select' && modifierKeys.cmdCtrl) return 'draw' as const;
+    if ((tool === 'draw' || tool === 'flex') && modifierKeys.cmdCtrl) return 'select' as const;
     return tool;
   })();
+
+  // Immediately update cursor when effectiveTool changes (e.g. pressing Ctrl)
+  // without waiting for a mouse move event
+  useEffect(() => {
+    if (dragState.current.type !== 'none') return; // don't interfere mid-drag
+    if (effectiveTool === 'draw') setCursor(PENCIL_CURSOR);
+    else setCursor('default');
+  }, [effectiveTool]);
 
   const activeClip = project.tracks
     .flatMap((t) => t.clips)
@@ -142,37 +155,64 @@ export const PianoRoll: React.FC = () => {
   const tsDen = ts.denominator ?? 4;
   const ticksPerMeasure = project.ticksPerBeat * tsNum * (4 / tsDen);
 
-  // drag type extended with trim-start and draw-resize
+  // drag type
   const dragState = useRef<{
-    type: 'none' | 'draw-resize' | 'move' | 'resize' | 'trim-start' | 'select-box';
+    type: 'none' | 'draw-resize' | 'move' | 'resize' | 'trim-start' | 'select-box' | 'dot-place' | 'ext-click';
     startX: number;
     startY: number;
     noteId?: string;
     noteStartTick?: number;
     notePitch?: number;
-    mouseTickOffset?: number; // mouse offset from note start, for absolute move
-    mousePitchOffset?: number; // mouse offset from note pitch, for absolute move
-    lastPitch?: number; // for preview dedup
+    mouseTickOffset?: number;
+    mousePitchOffset?: number;
+    lastPitch?: number;
   }>({ type: 'none', startX: 0, startY: 0 });
 
-  // Hit test: left-trim zone, resize zone, or body
+  // Hit test for notes — triangle head is transparent, extension line zones take priority
   const hitTestNote = useCallback(
-    (mx: number, my: number): { note: Note; zone: 'body' | 'resize' | 'trim-start' } | null => {
+    (mx: number, my: number): { note: Note; zone: 'body' | 'resize' | 'trim-start' | 'ext-body' | 'ext-end' } | null => {
+      const headH = pps;
+      const headW = headH * Math.sqrt(3) / 2;
+
       for (let i = notes.length - 1; i >= 0; i--) {
         const n = notes[i];
-        const nx = (n.startTick - scrollX) * ppt;
-        const nw = n.duration * ppt;
-        const ny = size.height - (n.pitch - scrollY + 1) * pps;
-        if (mx >= nx && mx <= nx + nw && my >= ny && my <= ny + pps) {
-          const handleW = Math.max(6, Math.min(12, nw * 0.2));
-          if (mx >= nx + nw - handleW) return { note: n, zone: 'resize' };
-          if (mx <= nx + handleW && nw > handleW * 2) return { note: n, zone: 'trim-start' };
-          return { note: n, zone: 'body' };
+        const effDur = getEffectiveDuration(n, notes, ticksPerMeasure);
+        const cx = (n.startTick - scrollX) * ppt;
+        const cy = size.height - (n.pitch - scrollY + 0.5) * pps;
+        const tailFullW = effDur * ppt;
+        const tailH = pps * 0.6;
+
+        // Full clickable area = triangle head union extension line
+        const noteRight = cx + Math.max(headW, tailFullW);
+        const noteTop = cy - headH / 2;
+        const noteBot = cy + headH / 2;
+        if (mx < cx - 2 || mx > noteRight + 2 || my < noteTop - 2 || my > noteBot + 2) continue;
+
+        // Triangle head zone
+        if (mx <= cx + headW) {
+          // Null-duration: head is move (change pitch + tick)
+          // Confirmed: head is trim-start (change start position)
+          return { note: n, zone: n.duration === null ? 'body' : 'trim-start' };
         }
+
+        // Extension line zones (past the head)
+        if (tailFullW > headW && mx <= cx + tailFullW) {
+          if (n.duration === null) {
+            if (mx >= cx + tailFullW - 6) return { note: n, zone: 'ext-end' };
+            return { note: n, zone: 'ext-body' };
+          } else {
+            const handleW = Math.max(6, Math.min(12, tailFullW * 0.2));
+            if (mx >= cx + tailFullW - handleW) return { note: n, zone: 'resize' };
+            return { note: n, zone: 'body' };
+          }
+        }
+
+        // Fallback (head only, no extension)
+        return { note: n, zone: n.duration === null ? 'body' : 'trim-start' };
       }
       return null;
     },
-    [notes, scrollX, scrollY, ppt, pps, size.height]
+    [notes, scrollX, scrollY, ppt, pps, size.height, ticksPerMeasure]
   );
 
   // Middle-click pan: joystick-style scrolling
@@ -212,7 +252,16 @@ export const PianoRoll: React.FC = () => {
         return;
       }
 
+      // Right-click → open tool wheel
+      if (e.button === 2) {
+        e.preventDefault();
+        setToolWheel({ x: e.clientX, y: e.clientY });
+        return;
+      }
+
       if (!activeClipId) return;
+      // Clear preview ghost immediately on mousedown
+      setDotPreview(null);
       const rect = e.currentTarget.getBoundingClientRect();
       canvasRect.current = rect;
       const mx = e.clientX - rect.left;
@@ -223,7 +272,6 @@ export const PianoRoll: React.FC = () => {
       // Register global mouseup so drag always ends, even if mouse leaves canvas
       const globalMouseUp = (ev: MouseEvent) => {
         document.removeEventListener('mouseup', globalMouseUp);
-        // Simulate the same cleanup as handleMouseUp
         const ds = dragState.current;
         if (ds.type === 'select-box' && canvasRect.current) {
           const umx = ev.clientX - canvasRect.current.left;
@@ -233,15 +281,20 @@ export const PianoRoll: React.FC = () => {
           const y1 = Math.min(ds.startY, umy);
           const y2 = Math.max(ds.startY, umy);
           const { viewport, selectedNoteIds: selIds } = useUiStore.getState();
-          const currentNotes = useProjectStore.getState().project.tracks
-            .flatMap((t) => t.clips).flatMap((c) => c.notes);
+          const currentClips = useProjectStore.getState().project.tracks.flatMap((t) => t.clips);
+          const tsMeasure = useProjectStore.getState().project.ticksPerBeat * tsNum * (4 / tsDen);
           const boxSelected = new Set<string>();
-          for (const n of currentNotes) {
-            const nx = (n.startTick - viewport.scrollX) * viewport.pixelsPerTick;
-            const nw = n.duration * viewport.pixelsPerTick;
-            const ny = size.height - (n.pitch - viewport.scrollY + 1) * viewport.pixelsPerSemitone;
-            if (nx + nw >= x1 && nx <= x2 && ny + viewport.pixelsPerSemitone >= y1 && ny <= y2) {
-              boxSelected.add(n.id);
+          for (const clip of currentClips) {
+            for (const n of clip.notes) {
+              const effDur = getEffectiveDuration(n, clip.notes, tsMeasure);
+              const nx = (n.startTick - viewport.scrollX) * viewport.pixelsPerTick;
+              const nw = effDur * viewport.pixelsPerTick;
+              const ny = size.height - (n.pitch - viewport.scrollY + 0.5) * viewport.pixelsPerSemitone;
+              const hH = viewport.pixelsPerSemitone * 0.5; // half head height
+              // Check if triangle head or extension line overlaps with select box
+              if (nx + nw >= x1 && nx <= x2 && ny + hH >= y1 && ny - hH <= y2) {
+                boxSelected.add(n.id);
+              }
             }
           }
           const selected = ev.shiftKey
@@ -249,8 +302,7 @@ export const PianoRoll: React.FC = () => {
             : boxSelected;
           setSelectedNoteIds(selected);
         }
-        // Alt+drag copy: if Alt still held at mouseUp and we did a move,
-        // paste copies of selected notes at their original (pre-move) positions
+        // Alt+drag copy
         if (ds.type === 'move' && ev.altKey) {
           const { activeClipId: clipId } = useUiStore.getState();
           if (clipId) {
@@ -264,7 +316,6 @@ export const PianoRoll: React.FC = () => {
                 if (currentNote) {
                   const deltaTick = currentNote.startTick - ds.noteStartTick;
                   const deltaPitch = currentNote.pitch - ds.notePitch;
-                  // Only copy if notes actually moved (prevent in-place duplication)
                   if (deltaTick !== 0 || deltaPitch !== 0) {
                     const copies = movedNotes.map(({ id: _, ...rest }) => ({
                       ...rest,
@@ -286,7 +337,7 @@ export const PianoRoll: React.FC = () => {
           const drawnNote = useProjectStore.getState().project.tracks
             .flatMap((t) => t.clips).flatMap((c) => c.notes)
             .find((n) => n.id === ds2.noteId);
-          if (drawnNote && drawnNote.duration > 0) {
+          if (drawnNote && drawnNote.duration !== null && drawnNote.duration > 0) {
             setLastDrawnDuration(drawnNote.duration);
           }
         }
@@ -299,11 +350,62 @@ export const PianoRoll: React.FC = () => {
       };
       document.addEventListener('mouseup', globalMouseUp);
 
-      if (effectiveTool === 'draw') {
+      if (effectiveTool === 'flex') {
+        // Dot tool: click to place note with null duration (or preset duration)
+        const hit = hitTestNote(mx, my);
+        if (hit && hit.zone === 'body') {
+          // Click note body/head → select and prepare to move
+          beginDrag();
+          if (!selectedNoteIds.has(hit.note.id)) {
+            setSelectedNoteIds(e.shiftKey ? new Set([...selectedNoteIds, hit.note.id]) : new Set([hit.note.id]));
+          }
+          const effDur = getEffectiveDuration(hit.note, notes, ticksPerMeasure);
+          previewNote(hit.note.pitch, tickToSeconds(effDur, bpm, project.ticksPerBeat), hit.note.velocity);
+          const mouseTick = pixelToTick(mx, ppt, scrollX);
+          const mousePitch = yToPitch(my, pps, scrollY, size.height);
+          dragState.current = {
+            type: 'move', startX: mx, startY: my, noteId: hit.note.id,
+            noteStartTick: hit.note.startTick, notePitch: hit.note.pitch,
+            mouseTickOffset: mouseTick - hit.note.startTick,
+            mousePitchOffset: mousePitch - hit.note.pitch,
+            lastPitch: hit.note.pitch,
+          };
+        } else if (hit && (hit.zone === 'ext-end' || hit.zone === 'resize')) {
+          // Drag extension line end / resize handle → resize
+          beginDrag();
+          dragState.current = { type: 'resize', startX: mx, startY: my, noteId: hit.note.id, noteStartTick: hit.note.startTick };
+        } else if (hit && hit.zone === 'trim-start') {
+          // Trim start handle
+          beginDrag();
+          dragState.current = { type: 'trim-start', startX: mx, startY: my, noteId: hit.note.id, noteStartTick: hit.note.startTick };
+        } else {
+          // Click empty space → place new note
+          beginDrag();
+          const snappedTick = snapTick(tick, snapTicks, ticksPerMeasure);
+          const clampedPitch = Math.min(127, Math.max(0, Math.round(pitch)));
+          const newNoteId = addNote(activeClipId, {
+            pitch: clampedPitch,
+            startTick: Math.max(0, snappedTick),
+            duration: dotPresetDuration, // null or preset
+            velocity: 80,
+            channel: 0,
+            pitchBend: [],
+          });
+          previewNote(clampedPitch, 0.3, 80);
+          clearSelection();
+          dragState.current = {
+            type: 'dot-place', startX: mx, startY: my,
+            noteId: newNoteId,
+            noteStartTick: Math.max(0, snappedTick),
+            notePitch: clampedPitch,
+            lastPitch: clampedPitch,
+          };
+        }
+      } else if (effectiveTool === 'draw') {
         const hit = hitTestNote(mx, my);
         if (hit) {
           beginDrag();
-          if (hit.zone === 'resize') {
+          if (hit.zone === 'resize' || hit.zone === 'ext-end') {
             dragState.current = { type: 'resize', startX: mx, startY: my, noteId: hit.note.id, noteStartTick: hit.note.startTick };
           } else if (hit.zone === 'trim-start') {
             dragState.current = { type: 'trim-start', startX: mx, startY: my, noteId: hit.note.id, noteStartTick: hit.note.startTick };
@@ -311,7 +413,8 @@ export const PianoRoll: React.FC = () => {
             if (!selectedNoteIds.has(hit.note.id)) {
               setSelectedNoteIds(e.shiftKey ? new Set([...selectedNoteIds, hit.note.id]) : new Set([hit.note.id]));
             }
-            previewNote(hit.note.pitch, tickToSeconds(hit.note.duration, bpm, project.ticksPerBeat), hit.note.velocity);
+            const effDur = getEffectiveDuration(hit.note, notes, ticksPerMeasure);
+            previewNote(hit.note.pitch, tickToSeconds(effDur, bpm, project.ticksPerBeat), hit.note.velocity);
             const noteTick = hit.note.startTick;
             const notePitch = hit.note.pitch;
             const mouseTick = pixelToTick(mx, ppt, scrollX);
@@ -324,11 +427,8 @@ export const PianoRoll: React.FC = () => {
               lastPitch: notePitch,
             };
           }
-        } else if (selectedNoteIds.size > 0) {
-          // In pencil mode, clicking empty space with selection → deselect first
-          clearSelection();
         } else {
-          // beginDrag first so addNote skips its own pushUndo — the whole gesture is one undo step
+          // Create note with explicit duration (pencil tool)
           beginDrag();
           const snappedTick = snapTick(tick, snapTicks, ticksPerMeasure);
           const clampedPitch = Math.min(127, Math.max(0, Math.round(pitch)));
@@ -356,7 +456,7 @@ export const PianoRoll: React.FC = () => {
         const hit = hitTestNote(mx, my);
         if (hit) {
           beginDrag();
-          if (hit.zone === 'resize') {
+          if (hit.zone === 'resize' || hit.zone === 'ext-end') {
             dragState.current = { type: 'resize', startX: mx, startY: my, noteId: hit.note.id, noteStartTick: hit.note.startTick };
           } else if (hit.zone === 'trim-start') {
             dragState.current = { type: 'trim-start', startX: mx, startY: my, noteId: hit.note.id, noteStartTick: hit.note.startTick };
@@ -369,7 +469,8 @@ export const PianoRoll: React.FC = () => {
               setSelectedNoteIds(new Set([hit.note.id]));
             }
 
-            previewNote(hit.note.pitch, tickToSeconds(hit.note.duration, bpm, project.ticksPerBeat), hit.note.velocity);
+            const effDur = getEffectiveDuration(hit.note, notes, ticksPerMeasure);
+            previewNote(hit.note.pitch, tickToSeconds(effDur, bpm, project.ticksPerBeat), hit.note.velocity);
             const noteTick = hit.note.startTick;
             const notePitch = hit.note.pitch;
             const mouseTick = pixelToTick(mx, ppt, scrollX);
@@ -382,7 +483,7 @@ export const PianoRoll: React.FC = () => {
               lastPitch: notePitch,
             };
 
-            // Always capture ghost notes at original positions during move drag
+            // Ghost notes at original positions during move drag
             if (activeClipId) {
               const currentSelIds = selectedNoteIds.has(hit.note.id) ? selectedNoteIds : new Set([hit.note.id]);
               const clip = project.tracks.flatMap((t) => t.clips).find((c) => c.id === activeClipId);
@@ -399,12 +500,9 @@ export const PianoRoll: React.FC = () => {
           dragState.current = { type: 'select-box', startX: mx, startY: my };
           setSelectBox({ x1: mx, y1: my, x2: mx, y2: my });
         }
-      } else if (effectiveTool === 'erase') {
-        const hit = hitTestNote(mx, my);
-        if (hit) deleteNotes(activeClipId, [hit.note.id]);
       }
     },
-    [effectiveTool, activeClipId, ppt, pps, scrollX, scrollY, size.height, snapTicks, notes, selectedNoteIds, hitTestNote, addNote, drawEditNote, beginDrag, clearSelection, deleteNotes, setSelectedNoteIds, previewNote]
+    [effectiveTool, activeClipId, ppt, pps, scrollX, scrollY, size.height, snapTicks, notes, selectedNoteIds, hitTestNote, addNote, drawEditNote, beginDrag, clearSelection, deleteNotes, setSelectedNoteIds, previewNote, confirmDuration, dotPresetDuration, ticksPerMeasure]
   );
 
   const handleMouseMove = useCallback(
@@ -417,15 +515,33 @@ export const PianoRoll: React.FC = () => {
       if (ds.type === 'none') {
         // Update cursor and hover highlight
         const hit = hitTestNote(mx, my);
-        useUiStore.getState().setHoveredNoteId(hit?.note.id ?? null);
-        if (hit?.zone === 'resize' || hit?.zone === 'trim-start') {
+        // In flex tool, null-duration ext-body is "transparent" — no hover, show preview through it
+        const isTransparentHit = effectiveTool === 'flex' && hit && hit.zone === 'ext-body' && hit.note.duration === null;
+        const effectiveHit = isTransparentHit ? null : hit;
+        useUiStore.getState().setHoveredNoteId(effectiveHit?.note.id ?? null);
+        if (effectiveHit?.zone === 'resize' || effectiveHit?.zone === 'ext-end') {
           setCursor('ew-resize');
-        } else if (hit) {
-          setCursor(effectiveTool === 'erase' ? 'not-allowed' : 'grab');
+        } else if (effectiveHit?.zone === 'trim-start') {
+          setCursor('ew-resize');
+        } else if (effectiveHit?.zone === 'ext-body') {
+          setCursor('pointer');
+        } else if (effectiveHit) {
+          setCursor('grab');
+        } else if (effectiveTool === 'draw') {
+          setCursor(PENCIL_CURSOR);
         } else {
-          // In draw mode with selection, empty space click will deselect → show default cursor
-          const drawButWillDeselect = effectiveTool === 'draw' && selectedNoteIds.size > 0;
-          setCursor(effectiveTool === 'draw' && !drawButWillDeselect ? PENCIL_CURSOR : 'default');
+          setCursor('default');
+        }
+
+        // Flex preview: show when hovering empty space or transparent null-duration body
+        if (effectiveTool === 'flex' && !effectiveHit) {
+          const rawTick = pixelToTick(mx, ppt, scrollX);
+          const rawPitch = yToPitch(my, pps, scrollY, size.height);
+          const snappedTick = snapTick(rawTick, snapTicks, ticksPerMeasure);
+          const clampedPitch = Math.min(127, Math.max(0, Math.round(rawPitch)));
+          setDotPreview({ tick: Math.max(0, snappedTick), pitch: clampedPitch });
+        } else {
+          setDotPreview(null);
         }
         return;
       }
@@ -437,9 +553,24 @@ export const PianoRoll: React.FC = () => {
 
       if (!activeClipId) return;
 
+      // Dot-place: slide to adjust pitch/tick while mouse held
+      if (ds.type === 'dot-place' && ds.noteId) {
+        const rawPitch = yToPitch(my, pps, scrollY, size.height);
+        const newPitch = Math.min(127, Math.max(0, Math.round(rawPitch)));
+        const rawTick = pixelToTick(mx, ppt, scrollX);
+        const newTick = Math.max(0, snapTick(rawTick, snapTicks, ticksPerMeasure));
+        const note = notes.find((n) => n.id === ds.noteId);
+        if (note && (newPitch !== note.pitch || newTick !== note.startTick)) {
+          moveNotes(activeClipId, [ds.noteId], newTick - note.startTick, newPitch - note.pitch);
+          if (newPitch !== ds.lastPitch) {
+            previewNote(newPitch, 0.3, note.velocity);
+            ds.lastPitch = newPitch;
+          }
+        }
+        return;
+      }
+
       if (ds.type === 'draw-resize' && ds.noteId && ds.noteStartTick !== undefined) {
-        // Duration: 1:1 relative offset from click point applied to note end.
-        // Mouse delta (px) → tick delta → add to initial duration.
         const dx = mx - ds.startX;
         const deltaTicks = dx / ppt;
         const snappedDelta = Math.round(deltaTicks / snapTicks) * snapTicks;
@@ -458,9 +589,7 @@ export const PianoRoll: React.FC = () => {
       }
 
       if (ds.type === 'move' && ds.noteId && ds.noteStartTick !== undefined && ds.mouseTickOffset !== undefined && ds.mousePitchOffset !== undefined) {
-        // Update ghost style based on Alt key
         setGhostCopyMode(e.altKey);
-        // Absolute move: compute target from current mouse position minus the recorded offset
         const currentMouseTick = pixelToTick(mx, ppt, scrollX);
         const currentMousePitch = yToPitch(my, pps, scrollY, size.height);
         const targetTick = Math.max(0, snapTick(currentMouseTick - ds.mouseTickOffset, snapTicks, ticksPerMeasure));
@@ -473,11 +602,11 @@ export const PianoRoll: React.FC = () => {
           if (deltaTick !== 0 || deltaPitch !== 0) {
             const idsToMove = selectedNoteIds.has(ds.noteId) ? Array.from(selectedNoteIds) : [ds.noteId];
             moveNotes(activeClipId, idsToMove, deltaTick, deltaPitch);
-            // Preview if pitch changed — full duration, actual velocity, stops previous
             if (deltaPitch !== 0) {
               const newPitch = note.pitch + deltaPitch;
               if (newPitch !== ds.lastPitch) {
-                previewNote(newPitch, tickToSeconds(note.duration, bpm, project.ticksPerBeat), note.velocity);
+                const effDur = getEffectiveDuration(note, notes, ticksPerMeasure);
+                previewNote(newPitch, tickToSeconds(effDur, bpm, project.ticksPerBeat), note.velocity);
                 ds.lastPitch = newPitch;
               }
             }
@@ -488,14 +617,18 @@ export const PianoRoll: React.FC = () => {
         const newDuration = Math.max(snapTicks, snapTick(currentTick - ds.noteStartTick, snapTicks, ticksPerMeasure));
         const note = notes.find((n) => n.id === ds.noteId);
         if (note) {
-          const delta = newDuration - note.duration;
+          const currentDur = note.duration ?? getEffectiveDuration(note, notes, ticksPerMeasure);
+          const delta = newDuration - currentDur;
           if (delta !== 0) {
             const idsToResize = selectedNoteIds.has(ds.noteId) ? Array.from(selectedNoteIds) : [ds.noteId];
+            // For null-duration notes, first confirm, then resize
+            if (note.duration === null) {
+              confirmDuration(activeClipId, idsToResize);
+            }
             resizeNotes(activeClipId, idsToResize, delta);
           }
         }
       } else if (ds.type === 'trim-start' && ds.noteId && ds.noteStartTick !== undefined) {
-        // Trim start: mouse position → new startTick, duration shrinks correspondingly
         const currentTick = pixelToTick(mx, ppt, scrollX);
         const newStartTick = snapTick(currentTick, snapTicks, ticksPerMeasure);
         const note = notes.find((n) => n.id === ds.noteId);
@@ -508,12 +641,17 @@ export const PianoRoll: React.FC = () => {
         }
       }
     },
-    [activeClipId, ppt, pps, scrollX, scrollY, size.height, snapTicks, selectedNoteIds, notes, drawEditNote, moveNotes, resizeNotes, trimNoteStart, hitTestNote, effectiveTool, previewNote]
+    [activeClipId, ppt, pps, scrollX, scrollY, size.height, snapTicks, selectedNoteIds, notes, drawEditNote, moveNotes, resizeNotes, trimNoteStart, hitTestNote, effectiveTool, previewNote, confirmDuration, ticksPerMeasure]
   );
 
   const handleMouseLeave = useCallback(() => {
     setCursor(effectiveTool === 'draw' ? PENCIL_CURSOR : 'default');
     useUiStore.getState().setHoveredNoteId(null);
+    setDotPreview(null);
+  }, [effectiveTool]);
+
+  const handleContextMenu = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
   }, []);
 
   const handleWheel = useCallback(
@@ -528,7 +666,6 @@ export const PianoRoll: React.FC = () => {
       } else if (e.shiftKey) {
         setViewport({ scrollX: Math.max(0, scrollX + e.deltaY / ppt) });
       } else {
-        // Handle both deltaX (horizontal) and deltaY (vertical) for trackpad two-finger scroll
         const newScrollX = Math.max(0, scrollX + e.deltaX / ppt);
         const newScrollY = Math.max(0, Math.min(115, scrollY - e.deltaY / pps));
         setViewport({ scrollX: newScrollX, scrollY: newScrollY });
@@ -545,17 +682,16 @@ export const PianoRoll: React.FC = () => {
     return () => el.removeEventListener('wheel', handleWheel);
   }, [handleWheel]);
 
-  // Touch: GarageBand-style — tap note to select, drag to move/resize, tap empty to scroll
-  // Expanded hit area (+8px) for fat fingers, 10px deadzone before committing to drag/scroll
-  const TOUCH_PAD = 12; // extra px around notes for touch hit
-  const TOUCH_DEADZONE = 10; // px movement before action starts
+  // Touch: GarageBand-style
+  const TOUCH_PAD = 12;
+  const TOUCH_DEADZONE = 10;
 
   const touchState = useRef<{
     phase: 'pending' | 'active';
     startX: number;
     startY: number;
-    hit: { note: Note; zone: 'body' | 'resize' | 'trim-start' } | null;
-    mode: 'scroll' | 'move' | 'resize' | 'trim-start';
+    hit: { note: Note; zone: 'body' | 'resize' | 'trim-start' | 'ext-body' | 'ext-end' } | null;
+    mode: 'scroll' | 'move' | 'resize' | 'trim-start' | 'ext-body';
     noteId?: string;
     noteStartTick?: number;
     mouseTickOffset?: number;
@@ -566,21 +702,15 @@ export const PianoRoll: React.FC = () => {
     const el = gridContainerRef.current;
     if (!el) return;
 
-    // Touch hit test with expanded area
-    const touchHitTest = (mx: number, my: number, canvasH: number, vp: { scrollX: number; scrollY: number; pixelsPerTick: number; pixelsPerSemitone: number }, clipNotes: Note[]): { note: Note; zone: 'body' | 'resize' | 'trim-start' } | null => {
+    const touchHitTest = (mx: number, my: number, canvasH: number, vp: { scrollX: number; scrollY: number; pixelsPerTick: number; pixelsPerSemitone: number }, clipNotes: Note[]): { note: Note; zone: 'body' | 'resize' | 'trim-start' | 'ext-body' | 'ext-end' } | null => {
+      const dotR = vp.pixelsPerSemitone * 0.4;
       for (let i = clipNotes.length - 1; i >= 0; i--) {
         const n = clipNotes[i];
-        const nx = (n.startTick - vp.scrollX) * vp.pixelsPerTick;
-        const nw = n.duration * vp.pixelsPerTick;
-        const ny = canvasH - (n.pitch - vp.scrollY + 1) * vp.pixelsPerSemitone;
-        const nh = vp.pixelsPerSemitone;
-        // Expanded hit area
-        if (mx >= nx - TOUCH_PAD && mx <= nx + nw + TOUCH_PAD && my >= ny - TOUCH_PAD && my <= ny + nh + TOUCH_PAD) {
-          const handleW = Math.max(8, Math.min(16, nw * 0.15)); // touch handles: bigger than mouse but body stays dominant
-          if (mx >= nx + nw - handleW) return { note: n, zone: 'resize' };
-          if (mx <= nx + handleW && nw > handleW * 2) return { note: n, zone: 'trim-start' };
-          return { note: n, zone: 'body' };
-        }
+        const cx = (n.startTick - vp.scrollX) * vp.pixelsPerTick;
+        const cy = canvasH - (n.pitch - vp.scrollY + 0.5) * vp.pixelsPerSemitone;
+        // Check dot circle
+        const dist = Math.hypot(mx - cx, my - cy);
+        if (dist <= dotR + TOUCH_PAD) return { note: n, zone: 'body' };
       }
       return null;
     };
@@ -597,19 +727,17 @@ export const PianoRoll: React.FC = () => {
         .flatMap((t) => t.clips).find((c) => c.id === useUiStore.getState().activeClipId);
       const hit = clip ? touchHitTest(mx, my, sizeRef.current.height, vp, clip.notes) : null;
 
-      // Don't commit yet — wait for deadzone
       touchState.current = {
         phase: 'pending',
         startX: touch.clientX, startY: touch.clientY,
         hit,
-        mode: hit ? (hit.zone === 'body' ? 'move' : hit.zone) : 'scroll',
+        mode: hit ? (hit.zone === 'body' ? 'move' : hit.zone === 'ext-end' ? 'resize' : hit.zone) : 'scroll',
       };
     };
 
     const activateDrag = (ts: NonNullable<typeof touchState.current>) => {
       ts.phase = 'active';
       if (ts.hit) {
-        // Select the note
         const selIds = useUiStore.getState().selectedNoteIds;
         if (!selIds.has(ts.hit.note.id)) {
           useUiStore.getState().setSelectedNoteIds(new Set([ts.hit.note.id]));
@@ -632,13 +760,12 @@ export const PianoRoll: React.FC = () => {
       if (e.touches.length !== 1 || !touchState.current) return;
       e.preventDefault();
       const touch = e.touches[0];
-      const ts = touchState.current;
+      const tsState = touchState.current;
 
-      // Deadzone check
-      if (ts.phase === 'pending') {
-        const dist = Math.hypot(touch.clientX - ts.startX, touch.clientY - ts.startY);
+      if (tsState.phase === 'pending') {
+        const dist = Math.hypot(touch.clientX - tsState.startX, touch.clientY - tsState.startY);
         if (dist < TOUCH_DEADZONE) return;
-        activateDrag(ts);
+        activateDrag(tsState);
       }
 
       const rect = el.getBoundingClientRect();
@@ -646,11 +773,11 @@ export const PianoRoll: React.FC = () => {
       const my = touch.clientY - rect.top;
       const vp = useUiStore.getState().viewport;
 
-      if (ts.mode === 'scroll') {
-        const dx = touch.clientX - ts.startX;
-        const dy = touch.clientY - ts.startY;
-        ts.startX = touch.clientX;
-        ts.startY = touch.clientY;
+      if (tsState.mode === 'scroll') {
+        const dx = touch.clientX - tsState.startX;
+        const dy = touch.clientY - tsState.startY;
+        tsState.startX = touch.clientX;
+        tsState.startY = touch.clientY;
         useUiStore.getState().setViewport({
           scrollX: Math.max(0, vp.scrollX - dx / vp.pixelsPerTick),
           scrollY: Math.max(0, Math.min(115, vp.scrollY + dy / vp.pixelsPerSemitone)),
@@ -661,41 +788,40 @@ export const PianoRoll: React.FC = () => {
       const clipId = useUiStore.getState().activeClipId;
       const store = useProjectStore.getState();
       const clip = clipId ? store.project.tracks.flatMap((t) => t.clips).find((c) => c.id === clipId) : null;
-      if (!clip || !clipId || !ts.noteId) return;
+      if (!clip || !clipId || !tsState.noteId) return;
       const selIds = useUiStore.getState().selectedNoteIds;
-      const ids = selIds.has(ts.noteId) ? Array.from(selIds) : [ts.noteId];
-      // Compute snap fresh from store (not from stale closure)
-      const uiState = useUiStore.getState();
+      const ids = selIds.has(tsState.noteId) ? Array.from(selIds) : [tsState.noteId];
       const proj = useProjectStore.getState().project;
       const tsig = proj.timeSignatureChanges[0] ?? { numerator: 4, denominator: 4 };
       const tpm = proj.ticksPerBeat * (tsig.numerator ?? 4) * (4 / (tsig.denominator ?? 4));
-      const sn = uiState.snapDivision === 'smart'
+      const sn = useUiStore.getState().snapDivision === 'smart'
         ? getSmartSnapTicks(vp.pixelsPerTick, proj.ticksPerBeat, tsig.numerator ?? 4, tsig.denominator ?? 4)
-        : getSnapTicksFromDivision(uiState.snapDivision, proj.ticksPerBeat, tsig.numerator ?? 4, tsig.denominator ?? 4);
+        : getSnapTicksFromDivision(useUiStore.getState().snapDivision as number, proj.ticksPerBeat, tsig.numerator ?? 4, tsig.denominator ?? 4);
 
-      if (ts.mode === 'move' && ts.noteStartTick !== undefined && ts.mouseTickOffset !== undefined && ts.mousePitchOffset !== undefined) {
+      if (tsState.mode === 'move' && tsState.noteStartTick !== undefined && tsState.mouseTickOffset !== undefined && tsState.mousePitchOffset !== undefined) {
         const curTick = pixelToTick(mx, vp.pixelsPerTick, vp.scrollX);
         const curPitch = yToPitch(my, vp.pixelsPerSemitone, vp.scrollY, sizeRef.current.height);
-        const targetTick = Math.max(0, snapTick(curTick - ts.mouseTickOffset, sn, tpm));
-        const targetPitch = Math.round(curPitch - ts.mousePitchOffset);
-        const note = clip.notes.find((n) => n.id === ts.noteId);
+        const targetTick = Math.max(0, snapTick(curTick - tsState.mouseTickOffset, sn, tpm));
+        const targetPitch = Math.round(curPitch - tsState.mousePitchOffset);
+        const note = clip.notes.find((n) => n.id === tsState.noteId);
         if (note) {
           const dt = targetTick - note.startTick;
           const dp = Math.min(127, Math.max(0, targetPitch)) - note.pitch;
           if (dt !== 0 || dp !== 0) store.moveNotes(clipId, ids, dt, dp);
         }
-      } else if (ts.mode === 'resize' && ts.noteStartTick !== undefined) {
+      } else if (tsState.mode === 'resize' && tsState.noteStartTick !== undefined) {
         const curTick = pixelToTick(mx, vp.pixelsPerTick, vp.scrollX);
-        const newDur = Math.max(sn, Math.round((curTick - ts.noteStartTick) / sn) * sn);
-        const note = clip.notes.find((n) => n.id === ts.noteId);
+        const newDur = Math.max(sn, Math.round((curTick - tsState.noteStartTick) / sn) * sn);
+        const note = clip.notes.find((n) => n.id === tsState.noteId);
         if (note) {
-          const delta = newDur - note.duration;
+          const currentDur = note.duration ?? sn;
+          const delta = newDur - currentDur;
           if (delta !== 0) store.resizeNotes(clipId, ids, delta);
         }
-      } else if (ts.mode === 'trim-start') {
+      } else if (tsState.mode === 'trim-start') {
         const curTick = pixelToTick(mx, vp.pixelsPerTick, vp.scrollX);
         const newStart = snapTick(curTick, sn, tpm);
-        const note = clip.notes.find((n) => n.id === ts.noteId);
+        const note = clip.notes.find((n) => n.id === tsState.noteId);
         if (note) {
           const delta = newStart - note.startTick;
           if (delta !== 0) store.trimNoteStart(clipId, ids, delta);
@@ -704,15 +830,13 @@ export const PianoRoll: React.FC = () => {
     };
 
     const onTouchEnd = () => {
-      const ts = touchState.current;
-      if (ts) {
-        if (ts.phase === 'pending' && ts.hit) {
-          // Tap without drag: just select the note
-          useUiStore.getState().setSelectedNoteIds(new Set([ts.hit.note.id]));
-        } else if (ts.phase === 'pending' && !ts.hit) {
-          // Tap empty: deselect
+      const tsState = touchState.current;
+      if (tsState) {
+        if (tsState.phase === 'pending' && tsState.hit) {
+          useUiStore.getState().setSelectedNoteIds(new Set([tsState.hit.note.id]));
+        } else if (tsState.phase === 'pending' && !tsState.hit) {
           useUiStore.getState().clearSelection();
-        } else if (ts.phase === 'active' && ts.mode !== 'scroll') {
+        } else if (tsState.phase === 'active' && tsState.mode !== 'scroll') {
           useProjectStore.getState().endDrag();
         }
       }
@@ -744,6 +868,12 @@ export const PianoRoll: React.FC = () => {
       setPlayheadTick(Math.max(0, snapped));
     },
     [snapTicks, setPlayheadTick]
+  );
+
+  // Compute null durations for rendering extension lines
+  const nullDurations = React.useMemo(
+    () => computeNullDurations(notes, ticksPerMeasure),
+    [notes, ticksPerMeasure]
   );
 
   const gridWidth = size.width - PIANO_KEY_WIDTH;
@@ -781,7 +911,7 @@ export const PianoRoll: React.FC = () => {
         />
       </div>
 
-      {/* Chord Track row — placeholder for future chord system */}
+      {/* Chord Track row */}
       <div style={{ display: 'flex' }}>
         <div style={{ width: PIANO_KEY_WIDTH, flexShrink: 0, backgroundColor: '#1e1e1e', borderRight: '2px solid #555' }} />
         <div style={{ flex: 1, height: pps, backgroundColor: '#1e1e22' }} />
@@ -807,7 +937,7 @@ export const PianoRoll: React.FC = () => {
             pixelsPerSemitone={pps}
             ticksPerBeat={project.ticksPerBeat}
             numerator={ts.numerator}
-          denominator={ts.denominator ?? 4}
+            denominator={ts.denominator ?? 4}
             snapTicks={snapTicks}
           />
           <NoteLayer
@@ -818,13 +948,16 @@ export const PianoRoll: React.FC = () => {
             pixelsPerTick={ppt}
             pixelsPerSemitone={pps}
             notes={notes}
+            nullDurations={nullDurations}
             selectedNoteIds={selectedNoteIds}
             ghostNotes={ghostNotes}
             ghostCopyMode={ghostCopyMode}
+            dotPreview={dotPreview}
             cursor={cursor}
             onMouseDown={handleMouseDown}
             onMouseMove={handleMouseMove}
             onMouseLeave={handleMouseLeave}
+            onContextMenu={handleContextMenu}
           />
 
           {/* Selection box overlay */}
@@ -862,7 +995,7 @@ export const PianoRoll: React.FC = () => {
         </div>
       </div>
 
-      {/* Playhead handle strip — mirrors top ruler triangle, draggable */}
+      {/* Playhead handle strip */}
       <div style={{ display: 'flex' }}>
         <div style={{ width: PIANO_KEY_WIDTH, flexShrink: 0, backgroundColor: '#1e1e1e', borderRight: '2px solid #555' }} />
         <PlayheadHandle
@@ -911,6 +1044,17 @@ export const PianoRoll: React.FC = () => {
           onVelocityChange={handleVelocityChange}
         />
       </div>
+
+      {/* Tool wheel (right-click radial menu) */}
+      {toolWheel && (
+        <ToolWheel
+          x={toolWheel.x}
+          y={toolWheel.y}
+          currentTool={tool}
+          onSelect={(t) => setTool(t)}
+          onClose={() => setToolWheel(null)}
+        />
+      )}
     </div>
   );
 };

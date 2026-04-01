@@ -1,51 +1,43 @@
 import { Midi } from '@tonejs/midi';
-import type { Project } from '../types/model';
+import type { Project, Note } from '../types/model';
 import { generateId } from './id';
+import { getEffectiveDuration } from './noteDuration';
 
-export interface MidiTrackInfo {
-  index: number;
-  name: string;
-  noteCount: number;
-  instrument: string;
+/**
+ * Parse a MIDI file to extract track info for selection.
+ */
+export async function parseMidiTracks(file: File) {
+  const buffer = await file.arrayBuffer();
+  const midi = new Midi(buffer);
+  return { midi };
 }
 
 /**
- * Parse a MIDI file and return track info for user selection.
+ * Build our Project from parsed MIDI data.
  */
-export async function parseMidiTracks(file: File): Promise<{ midi: Midi; tracks: MidiTrackInfo[] }> {
-  const arrayBuffer = await file.arrayBuffer();
-  const midi = new Midi(arrayBuffer);
-  const tracks = midi.tracks
-    .map((t, i) => ({
-      index: i,
-      name: t.name || `Track ${i + 1}`,
-      noteCount: t.notes.length,
-      instrument: t.instrument?.name ?? 'piano',
-    }))
-    .filter((t) => t.noteCount > 0);
-  return { midi, tracks };
-}
-
-/**
- * Import specific tracks from a parsed MIDI into our Project format.
- * If trackIndices is null/undefined, import all tracks with notes.
- */
-export function buildProjectFromMidi(midi: Midi, fileName: string, trackIndices?: number[]): Project {
+export function buildProjectFromMidi(
+  midi: InstanceType<typeof Midi>,
+  fileName: string,
+  selectedTrackIndices?: number[],
+): Project {
   const ticksPerBeat = midi.header.ppq;
+  // If ppq is a getter-only, override it
+  if (ticksPerBeat !== midi.header.ppq) {
+    Object.defineProperty(midi.header, 'ppq', { value: ticksPerBeat, writable: false, configurable: true });
+  }
 
-  const selectedTracks = trackIndices
-    ? midi.tracks.filter((_, i) => trackIndices.includes(i))
+  const selectedTracks = selectedTrackIndices
+    ? selectedTrackIndices.map((i) => midi.tracks[i]).filter(Boolean)
     : midi.tracks.filter((t) => t.notes.length > 0);
 
-  // Merge all selected tracks into one clip (single-track piano roll)
-  const allNotes = selectedTracks.flatMap((midiTrack) =>
-    midiTrack.notes.map((n) => ({
+  const allNotes: Note[] = selectedTracks.flatMap((track) =>
+    track.notes.map((n) => ({
       id: generateId(),
       pitch: n.midi,
       startTick: Math.round(n.ticks),
-      duration: Math.max(1, Math.round(n.durationTicks)),
-      velocity: Math.max(1, Math.min(127, Math.round(n.velocity * 127))),
-      channel: midiTrack.channel ?? 0,
+      duration: Math.round(n.durationTicks),
+      velocity: Math.round(n.velocity * 127),
+      channel: 0,
       pitchBend: [] as { tick: number; value: number }[],
     }))
   );
@@ -118,6 +110,9 @@ export function exportMidi(project: Project): Blob {
     });
   }
 
+  const tsSig = project.timeSignatureChanges[0] ?? { numerator: 4, denominator: 4 };
+  const ticksPerMeasure = project.ticksPerBeat * tsSig.numerator * (4 / tsSig.denominator);
+
   for (const track of project.tracks) {
     const midiTrack = midi.addTrack();
     midiTrack.name = track.name;
@@ -125,10 +120,11 @@ export function exportMidi(project: Project): Blob {
     for (const clip of track.clips) {
       for (const note of clip.notes) {
         const absoluteTick = clip.startTick + note.startTick;
+        const effectiveDur = getEffectiveDuration(note, clip.notes, ticksPerMeasure);
         midiTrack.addNote({
           midi: note.pitch,
           ticks: absoluteTick,
-          durationTicks: note.duration,
+          durationTicks: effectiveDur,
           velocity: note.velocity / 127,
         });
       }

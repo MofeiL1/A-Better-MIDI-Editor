@@ -3,6 +3,7 @@ import * as Tone from 'tone';
 import { useProjectStore } from '../store/projectStore';
 import { useUiStore } from '../store/uiStore';
 import { tickToSeconds } from '../utils/timing';
+import { getEffectiveDuration } from '../utils/noteDuration';
 import { getPianoSampler, getSamplerSync } from '../audio/pianoSampler';
 
 // Module-level state: shared across all usePlayback() instances
@@ -54,6 +55,8 @@ export function usePlayback() {
 
     const bpm = project.tempoChanges[0]?.bpm ?? 120;
     const tpb = project.ticksPerBeat;
+    const ts = project.timeSignatureChanges[0] ?? { numerator: 4, denominator: 4 };
+    const ticksPerMeasure = tpb * ts.numerator * (4 / ts.denominator);
 
     const transport = Tone.getTransport();
     transport.stop();
@@ -66,7 +69,8 @@ export function usePlayback() {
 
     for (const note of clip.notes) {
       const noteStartSec = tickToSeconds(note.startTick, bpm, tpb) - startOffset;
-      const noteDurSec = Math.max(0.05, tickToSeconds(note.duration, bpm, tpb));
+      const effectiveDur = getEffectiveDuration(note, clip.notes, ticksPerMeasure);
+      const noteDurSec = Math.max(0.05, tickToSeconds(effectiveDur, bpm, tpb));
       if (noteStartSec < 0) continue;
 
       const noteName = Tone.Frequency(note.pitch, 'midi').toNote();
