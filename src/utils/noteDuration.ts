@@ -1,18 +1,23 @@
 import type { Note } from '../types/model';
+import { computeRoleMap } from './noteRole';
 
 /**
  * Compute auto-legato duration for a note with `duration === null`.
- * Duration extends to the next event (any note with a different startTick),
- * or to the end of the current measure if it's the last event.
+ * Role-aware: only looks at notes with the same effective role
+ * (melody→melody, chord→chord) to find the next startTick.
  */
 export function computeAutoLegato(
   note: Note,
   allNotes: Note[],
   ticksPerMeasure: number,
 ): number {
-  // Find the smallest startTick that is strictly greater than this note's startTick
+  const roleMap = computeRoleMap(allNotes);
+  const noteRole = roleMap.get(note.id) ?? 'melody';
+
+  // Find the smallest startTick strictly greater, among same-role notes
   let nextTick = Infinity;
   for (const n of allNotes) {
+    if ((roleMap.get(n.id) ?? 'melody') !== noteRole) continue;
     if (n.startTick > note.startTick && n.startTick < nextTick) {
       nextTick = n.startTick;
     }
@@ -47,6 +52,7 @@ export function getEffectiveDuration(
 
 /**
  * Compute effective durations for all notes with `duration === null`.
+ * Role-aware: melody notes only look at melody ticks, chord notes only at chord ticks.
  * Returns a Map from note ID to effective duration (only for null-duration notes).
  */
 export function computeNullDurations(
@@ -57,14 +63,27 @@ export function computeNullDurations(
   const nullNotes = allNotes.filter((n) => n.duration === null);
   if (nullNotes.length === 0) return result;
 
-  // Collect all unique startTicks, sorted
-  const tickSet = new Set<number>();
-  for (const n of allNotes) tickSet.add(n.startTick);
-  const sortedTicks = Array.from(tickSet).sort((a, b) => a - b);
+  const roleMap = computeRoleMap(allNotes);
+
+  // Collect sorted unique startTicks per role
+  const melodyTickSet = new Set<number>();
+  const chordTickSet = new Set<number>();
+  for (const n of allNotes) {
+    if ((roleMap.get(n.id) ?? 'melody') === 'melody') {
+      melodyTickSet.add(n.startTick);
+    } else {
+      chordTickSet.add(n.startTick);
+    }
+  }
+  const melodyTicks = Array.from(melodyTickSet).sort((a, b) => a - b);
+  const chordTicks = Array.from(chordTickSet).sort((a, b) => a - b);
 
   for (const note of nullNotes) {
+    const role = roleMap.get(note.id) ?? 'melody';
+    const sortedTicks = role === 'melody' ? melodyTicks : chordTicks;
     const idx = sortedTicks.indexOf(note.startTick);
-    if (idx < sortedTicks.length - 1) {
+
+    if (idx >= 0 && idx < sortedTicks.length - 1) {
       result.set(note.id, sortedTicks[idx + 1] - note.startTick);
     } else {
       const measureStart = Math.floor(note.startTick / ticksPerMeasure) * ticksPerMeasure;

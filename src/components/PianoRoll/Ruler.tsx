@@ -1,5 +1,6 @@
 import React, { useRef, useEffect, useCallback } from 'react';
 import { snapTick } from '../../utils/timing';
+import { useUiStore } from '../../store/uiStore';
 
 interface RulerProps {
   width: number;
@@ -9,7 +10,6 @@ interface RulerProps {
   ticksPerBeat: number;
   numerator: number;
   denominator: number;
-  playheadTick: number;
   snapTicks: number;
   onSetPlayhead?: (tick: number) => void;
 }
@@ -26,10 +26,10 @@ export const Ruler: React.FC<RulerProps> = ({
   ticksPerBeat,
   numerator,
   denominator,
-  playheadTick,
   snapTicks,
   onSetPlayhead,
 }) => {
+  const playheadTick = useUiStore((s) => s.playheadTick);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const isDragging = useRef(false);
   const canvasLeft = useRef(0);

@@ -1,6 +1,7 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import { Grid } from './Grid';
 import { NoteLayer } from './NoteLayer';
+import type { HeatmapData } from './NoteLayer';
 import { PianoKeys } from './PianoKeys';
 import { VelocityLane } from './VelocityLane';
 import { Ruler, RULER_HEIGHT } from './Ruler';
@@ -8,9 +9,11 @@ import { PlayheadHandle, HANDLE_HEIGHT } from './PlayheadHandle';
 import { ToolWheel } from './ToolWheel';
 import { useProjectStore } from '../../store/projectStore';
 import { useUiStore } from '../../store/uiStore';
+import { useShallow } from 'zustand/react/shallow';
 import { usePreviewNote } from '../../hooks/usePreviewNote';
-import { pixelToTick, yToPitch, snapTick, getSnapTicksFromDivision, getSmartSnapTicks, tickToPixel, tickToSeconds } from '../../utils/timing';
+import { pixelToTick, yToPitch, snapTick, getSnapTicksFromDivision, getSmartSnapTicks, tickToSeconds } from '../../utils/timing';
 import { computeNullDurations, getEffectiveDuration } from '../../utils/noteDuration';
+import { computeRoleMap, anchorScore } from '../../utils/noteRole';
 import type { Note } from '../../types/model';
 
 const DEFAULT_VEL_HEIGHT = 80;
@@ -26,6 +29,70 @@ const MAX_ZOOM_X = 2;
 
 type SelectBox = { x1: number; y1: number; x2: number; y2: number } | null;
 
+/** Lightweight overlay for the dot/flex tool ghost preview — avoids full NoteLayer redraw on mouse move */
+const DotPreviewCanvas = React.memo(({ width, height, scrollX, scrollY, ppt, pps, dotPreview }: {
+  width: number; height: number; scrollX: number; scrollY: number;
+  ppt: number; pps: number;
+  dotPreview: { tick: number; pitch: number; predictedRole: 'melody' | 'chord' } | null;
+}) => {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    const dpr = window.devicePixelRatio || 1;
+    const tw = Math.round(width * dpr);
+    const th = Math.round(height * dpr);
+    if (canvas.width !== tw || canvas.height !== th) { canvas.width = tw; canvas.height = th; }
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, width, height);
+    if (!dotPreview) return;
+    const headH = pps;
+    const headW = headH * Math.sqrt(3) / 2;
+    const headR = Math.max(1, headH * 0.15);
+    const cx = (dotPreview.tick - scrollX) * ppt;
+    const cy = height - (dotPreview.pitch - scrollY + 0.5) * pps;
+    const x1 = cx + headW;
+    const yTop = cy - headH / 2;
+    const yBot = cy + headH / 2;
+    ctx.globalAlpha = 0.35;
+    // Role-based preview: melody = blue, chord = orange
+    ctx.fillStyle = dotPreview.predictedRole === 'chord' ? 'hsl(30, 75%, 58%)' : 'hsl(210, 80%, 60%)';
+    ctx.beginPath();
+    ctx.moveTo(cx, yTop + headR);
+    ctx.arcTo(cx, yTop, x1, cy, headR);
+    ctx.arcTo(x1, cy, cx, yBot, headR);
+    ctx.arcTo(cx, yBot, cx, yTop, headR);
+    ctx.closePath();
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }, [width, height, scrollX, scrollY, ppt, pps, dotPreview]);
+  return (
+    <canvas ref={canvasRef} style={{
+      position: 'absolute', top: 0, left: 0, width, height,
+      pointerEvents: 'none', zIndex: 5,
+    }} />
+  );
+});
+
+/** Tiny component that reads playheadTick from store — isolates 60fps updates from PianoRoll */
+const PlayheadLine = React.memo(({ height, scrollX, ppt, gridWidth }: {
+  height: number; scrollX: number; ppt: number; gridWidth: number;
+}) => {
+  const playheadTick = useUiStore((s) => s.playheadTick);
+  const isPlaying = useUiStore((s) => s.isPlaying);
+  const x = (playheadTick - scrollX) * ppt;
+  if (x < 0 || x > gridWidth) return null;
+  return (
+    <div style={{
+      position: 'absolute', top: 0, left: x, width: 1, height,
+      backgroundColor: isPlaying ? '#fff' : 'rgba(255, 255, 255, 0.3)',
+      pointerEvents: 'none', zIndex: 10,
+    }} />
+  );
+});
+
 export const PianoRoll: React.FC = () => {
   const containerRef = useRef<HTMLDivElement>(null);
   const gridContainerRef = useRef<HTMLDivElement>(null);
@@ -40,8 +107,9 @@ export const PianoRoll: React.FC = () => {
   const [modifierKeys, setModifierKeys] = useState<{ shift: boolean; cmdCtrl: boolean }>({ shift: false, cmdCtrl: false });
   const [ghostNotes, setGhostNotes] = useState<{ pitch: number; startTick: number; duration: number | null; velocity: number }[]>([]);
   const [ghostCopyMode, setGhostCopyMode] = useState(false);
-  const [dotPreview, setDotPreview] = useState<{ tick: number; pitch: number } | null>(null);
+  const [dotPreview, setDotPreview] = useState<{ tick: number; pitch: number; predictedRole: 'melody' | 'chord' } | null>(null);
   const [toolWheel, setToolWheel] = useState<{ x: number; y: number } | null>(null);
+  const [roleMenu, setRoleMenu] = useState<{ x: number; y: number } | null>(null);
 
   const project = useProjectStore((s) => s.project);
   const addNote = useProjectStore((s) => s.addNote);
@@ -53,18 +121,36 @@ export const PianoRoll: React.FC = () => {
   const pasteNotes = useProjectStore((s) => s.pasteNotes);
   const confirmDuration = useProjectStore((s) => s.confirmDuration);
   const setNoteVelocity = useProjectStore((s) => s.setNoteVelocity);
+  const setNoteRole = useProjectStore((s) => s.setNoteRole);
   const beginDrag = useProjectStore((s) => s.beginDrag);
   const endDrag = useProjectStore((s) => s.endDrag);
   const { previewNote } = usePreviewNote();
 
   const {
     tool, viewport, selectedNoteIds, snapDivision,
-    activeClipId, playheadTick, isPlaying,
+    activeClipId,
     lastDrawnDuration, dotPresetDuration,
     setTool, setViewport, setSelectedNoteIds, clearSelection,
     setActiveClip, setActiveTrack, setPlayheadTick,
-    setLastDrawnDuration,
-  } = useUiStore();
+    setLastDrawnDuration, showRoleHeatmap,
+  } = useUiStore(useShallow((s) => ({
+    tool: s.tool,
+    viewport: s.viewport,
+    selectedNoteIds: s.selectedNoteIds,
+    snapDivision: s.snapDivision,
+    activeClipId: s.activeClipId,
+    lastDrawnDuration: s.lastDrawnDuration,
+    dotPresetDuration: s.dotPresetDuration,
+    setTool: s.setTool,
+    setViewport: s.setViewport,
+    setSelectedNoteIds: s.setSelectedNoteIds,
+    clearSelection: s.clearSelection,
+    setActiveClip: s.setActiveClip,
+    setActiveTrack: s.setActiveTrack,
+    setPlayheadTick: s.setPlayheadTick,
+    setLastDrawnDuration: s.setLastDrawnDuration,
+    showRoleHeatmap: s.showRoleHeatmap,
+  })));
 
   const scrollX = viewport.scrollX;
   const scrollY = viewport.scrollY;
@@ -156,6 +242,7 @@ export const PianoRoll: React.FC = () => {
   const ticksPerMeasure = project.ticksPerBeat * tsNum * (4 / tsDen);
 
   // drag type
+
   const dragState = useRef<{
     type: 'none' | 'draw-resize' | 'move' | 'resize' | 'trim-start' | 'select-box' | 'dot-place' | 'ext-click';
     startX: number;
@@ -168,14 +255,84 @@ export const PianoRoll: React.FC = () => {
     lastPitch?: number;
   }>({ type: 'none', startX: 0, startY: 0 });
 
-  // Hit test for notes — triangle head is transparent, extension line zones take priority
+  // Compute role map for melody/chord distinction (needed by hitTest and rendering)
+  const roleMap = React.useMemo(() => computeRoleMap(notes), [notes]);
+
+  // Pre-compute heatmap grid: includes top-note logic, shows even with no notes
+  const heatmapData = React.useMemo<HeatmapData | null>(() => {
+    if (!showRoleHeatmap) return null;
+
+    const hmMelAnchors: { tick: number; pitch: number }[] = [];
+    const hmChAnchors: { tick: number; pitch: number }[] = [];
+    let tMin = Infinity, tMax = -Infinity, pMin = 127, pMax = 0;
+
+    for (const n of notes) {
+      const role = roleMap.get(n.id) ?? 'melody';
+      (role === 'melody' ? hmMelAnchors : hmChAnchors).push({ tick: n.startTick, pitch: n.pitch });
+      if (n.startTick < tMin) tMin = n.startTick;
+      if (n.startTick > tMax) tMax = n.startTick;
+      if (n.pitch < pMin) pMin = n.pitch;
+      if (n.pitch > pMax) pMax = n.pitch;
+    }
+
+    const interval = 240;
+    if (notes.length === 0) {
+      // No notes: cover a reasonable default range, all melody
+      tMin = 0; tMax = 7680; pMin = 36; pMax = 96;
+    } else {
+      tMin = Math.max(0, tMin - 1920);
+      tMax = tMax + 3840;
+      pMin = Math.max(0, pMin - 12);
+      pMax = Math.min(127, pMax + 12);
+    }
+
+    const pitchRange = pMax - pMin + 1;
+    const tickSteps = Math.ceil((tMax - tMin) / interval) + 1;
+    const cells = new Int8Array(tickSteps * pitchRange);
+
+    // Pre-compute: for each cell interval, max note pitch (for top-note heuristic)
+    const cellMaxPitch = new Map<number, number>();
+    for (const n of notes) {
+      const cellIdx = Math.floor((n.startTick - tMin) / interval);
+      const existing = cellMaxPitch.get(cellIdx);
+      if (existing === undefined || n.pitch > existing) {
+        cellMaxPitch.set(cellIdx, n.pitch);
+      }
+    }
+
+    const hasAnchors = hmMelAnchors.length > 0 && hmChAnchors.length > 0;
+
+    for (let ti = 0; ti < tickSteps; ti++) {
+      const cellTick = tMin + ti * interval;
+      const row = ti * pitchRange;
+      const maxP = cellMaxPitch.get(ti);
+
+      for (let pi = 0; pi < pitchRange; pi++) {
+        const pitch = pMin + pi;
+        if (maxP !== undefined) {
+          // Top-note heuristic: above or equal to max existing = melody
+          cells[row + pi] = pitch >= maxP ? 1 : -1;
+        } else if (hasAnchors) {
+          // No notes at this tick — use anchor proximity
+          const sMel = anchorScore(cellTick, pitch, hmMelAnchors);
+          const sCh = anchorScore(cellTick, pitch, hmChAnchors);
+          cells[row + pi] = sCh < sMel ? -1 : 1;
+        } else {
+          // No anchors (no notes, or only one role type) — default melody
+          cells[row + pi] = 1;
+        }
+      }
+    }
+    return { cells, interval, tMin, pMin, pitchRange, tickSteps, defaultValue: 1 };
+  }, [showRoleHeatmap, notes, roleMap]);
+
+  // Hit test for notes — two-pass: melody first, then chord (melody has priority)
   const hitTestNote = useCallback(
     (mx: number, my: number): { note: Note; zone: 'body' | 'resize' | 'trim-start' | 'ext-body' | 'ext-end' } | null => {
       const headH = pps;
       const headW = headH * Math.sqrt(3) / 2;
 
-      for (let i = notes.length - 1; i >= 0; i--) {
-        const n = notes[i];
+      const testNote = (n: Note): { note: Note; zone: 'body' | 'resize' | 'trim-start' | 'ext-body' | 'ext-end' } | null => {
         const effDur = getEffectiveDuration(n, notes, ticksPerMeasure);
         const cx = (n.startTick - scrollX) * ppt;
         const cy = size.height - (n.pitch - scrollY + 0.5) * pps;
@@ -185,12 +342,10 @@ export const PianoRoll: React.FC = () => {
         const noteRight = cx + Math.max(headW, tailFullW);
         const noteTop = cy - headH / 2;
         const noteBot = cy + headH / 2;
-        if (mx < cx - 2 || mx > noteRight + 2 || my < noteTop - 2 || my > noteBot + 2) continue;
+        if (mx < cx - 2 || mx > noteRight + 2 || my < noteTop - 2 || my > noteBot + 2) return null;
 
         // Triangle head zone
         if (mx <= cx + headW) {
-          // Null-duration: head is move (change pitch + tick)
-          // Confirmed: head is trim-start (change start position)
           return { note: n, zone: n.duration === null ? 'body' : 'trim-start' };
         }
 
@@ -208,10 +363,23 @@ export const PianoRoll: React.FC = () => {
 
         // Fallback (head only, no extension)
         return { note: n, zone: n.duration === null ? 'body' : 'trim-start' };
+      };
+
+      // Pass 1: melody notes first (higher priority)
+      for (let i = notes.length - 1; i >= 0; i--) {
+        if ((roleMap.get(notes[i].id) ?? 'melody') !== 'melody') continue;
+        const hit = testNote(notes[i]);
+        if (hit) return hit;
+      }
+      // Pass 2: chord notes
+      for (let i = notes.length - 1; i >= 0; i--) {
+        if ((roleMap.get(notes[i].id) ?? 'melody') === 'melody') continue;
+        const hit = testNote(notes[i]);
+        if (hit) return hit;
       }
       return null;
     },
-    [notes, scrollX, scrollY, ppt, pps, size.height, ticksPerMeasure]
+    [notes, scrollX, scrollY, ppt, pps, size.height, ticksPerMeasure, roleMap]
   );
 
   // Middle-click pan: joystick-style scrolling
@@ -251,14 +419,26 @@ export const PianoRoll: React.FC = () => {
         return;
       }
 
-      // Right-click → open tool wheel
+      // Right-click on note → select + role menu (press-drag-release); on empty → tool wheel
       if (e.button === 2) {
         e.preventDefault();
-        setToolWheel({ x: e.clientX, y: e.clientY });
+        const rect = e.currentTarget.getBoundingClientRect();
+        const mx = e.clientX - rect.left;
+        const my = e.clientY - rect.top;
+        const hit = hitTestNote(mx, my);
+        if (hit) {
+          if (!selectedNoteIds.has(hit.note.id)) {
+            setSelectedNoteIds(new Set([hit.note.id]));
+          }
+          setRoleMenu({ x: e.clientX, y: e.clientY });
+        } else {
+          setToolWheel({ x: e.clientX, y: e.clientY });
+        }
         return;
       }
 
       if (!activeClipId) return;
+
       // Clear preview ghost immediately on mousedown
       setDotPreview(null);
       const rect = e.currentTarget.getBoundingClientRect();
@@ -538,7 +718,18 @@ export const PianoRoll: React.FC = () => {
           const rawPitch = yToPitch(my, pps, scrollY, size.height);
           const snappedTick = snapTick(rawTick, snapTicks, ticksPerMeasure);
           const clampedPitch = Math.min(127, Math.max(0, Math.round(rawPitch)));
-          setDotPreview({ tick: Math.max(0, snappedTick), pitch: clampedPitch });
+          const previewTick = Math.max(0, snappedTick);
+          // Lookup from pre-computed heatmap (O(1)) — includes top-note logic
+          let previewRole: 'melody' | 'chord' = 'melody';
+          if (heatmapData) {
+            const ti = Math.round((previewTick - heatmapData.tMin) / heatmapData.interval);
+            const pi = clampedPitch - heatmapData.pMin;
+            const val = (ti >= 0 && ti < heatmapData.tickSteps && pi >= 0 && pi < heatmapData.pitchRange)
+              ? heatmapData.cells[ti * heatmapData.pitchRange + pi]
+              : heatmapData.defaultValue;
+            previewRole = val < 0 ? 'chord' : 'melody';
+          }
+          setDotPreview({ tick: previewTick, pitch: clampedPitch, predictedRole: previewRole });
         } else {
           setDotPreview(null);
         }
@@ -659,8 +850,9 @@ export const PianoRoll: React.FC = () => {
       if (e.ctrlKey || e.metaKey) {
         const factor = e.deltaY > 0 ? 0.9 : 1.1;
         const newPpt = Math.max(MIN_ZOOM_X, Math.min(MAX_ZOOM_X, ppt * factor));
-        const playheadPx = (playheadTick - scrollX) * ppt;
-        const newScrollX = Math.max(0, playheadTick - playheadPx / newPpt);
+        const phTick = useUiStore.getState().playheadTick;
+        const playheadPx = (phTick - scrollX) * ppt;
+        const newScrollX = Math.max(0, phTick - playheadPx / newPpt);
         setViewport({ pixelsPerTick: newPpt, scrollX: newScrollX });
       } else if (e.shiftKey) {
         setViewport({ scrollX: Math.max(0, scrollX + e.deltaY / ppt) });
@@ -670,7 +862,7 @@ export const PianoRoll: React.FC = () => {
         setViewport({ scrollX: newScrollX, scrollY: newScrollY });
       }
     },
-    [ppt, pps, scrollX, scrollY, playheadTick, setViewport]
+    [ppt, pps, scrollX, scrollY, setViewport]
   );
 
   // Register native wheel handler with passive: false to allow preventDefault
@@ -876,8 +1068,6 @@ export const PianoRoll: React.FC = () => {
   );
 
   const gridWidth = size.width - PIANO_KEY_WIDTH;
-  const playheadX = tickToPixel(playheadTick, ppt, scrollX);
-  const showPlayhead = playheadX >= 0 && playheadX <= gridWidth;
 
   const sbDisplay = selectBox
     ? {
@@ -904,7 +1094,6 @@ export const PianoRoll: React.FC = () => {
           ticksPerBeat={project.ticksPerBeat}
           numerator={ts.numerator}
           denominator={ts.denominator ?? 4}
-          playheadTick={playheadTick}
           snapTicks={snapTicks}
           onSetPlayhead={handleSetPlayhead}
         />
@@ -948,15 +1137,24 @@ export const PianoRoll: React.FC = () => {
             pixelsPerSemitone={pps}
             notes={notes}
             nullDurations={nullDurations}
+            roleMap={roleMap}
             selectedNoteIds={selectedNoteIds}
             ghostNotes={ghostNotes}
             ghostCopyMode={ghostCopyMode}
-            dotPreview={dotPreview}
+            heatmapData={heatmapData}
             cursor={cursor}
             onMouseDown={handleMouseDown}
             onMouseMove={handleMouseMove}
             onMouseLeave={handleMouseLeave}
             onContextMenu={handleContextMenu}
+          />
+
+          {/* Dot preview overlay — separate canvas, avoids full NoteLayer redraw on mouse move */}
+          <DotPreviewCanvas
+            width={gridWidth} height={size.height}
+            scrollX={scrollX} scrollY={scrollY}
+            ppt={ppt} pps={pps}
+            dotPreview={dotPreview}
           />
 
           {/* Selection box overlay */}
@@ -976,21 +1174,8 @@ export const PianoRoll: React.FC = () => {
             />
           )}
 
-          {/* Playhead line */}
-          {showPlayhead && (
-            <div
-              style={{
-                position: 'absolute',
-                top: 0,
-                left: playheadX,
-                width: 1,
-                height: size.height,
-                backgroundColor: isPlaying ? '#fff' : 'rgba(255, 255, 255, 0.3)',
-                pointerEvents: 'none',
-                zIndex: 10,
-              }}
-            />
-          )}
+          {/* Playhead line — isolated component, doesn't cause PianoRoll re-render */}
+          <PlayheadLine height={size.height} scrollX={scrollX} ppt={ppt} gridWidth={gridWidth} />
         </div>
       </div>
 
@@ -1004,7 +1189,6 @@ export const PianoRoll: React.FC = () => {
           ticksPerBeat={project.ticksPerBeat}
           numerator={ts.numerator}
           denominator={ts.denominator ?? 4}
-          playheadTick={playheadTick}
           snapTicks={snapTicks}
           onSetPlayhead={handleSetPlayhead}
         />
@@ -1053,6 +1237,55 @@ export const PianoRoll: React.FC = () => {
           onSelect={(t) => setTool(t)}
           onClose={() => setToolWheel(null)}
         />
+      )}
+
+      {/* Role context menu — press-drag-release: hold right-click, drag to option, release */}
+      {roleMenu && activeClipId && (
+        <div
+          style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 1000 }}
+          onMouseUp={() => setRoleMenu(null)}
+          onContextMenu={(e) => e.preventDefault()}
+        >
+          <div
+            style={{
+              position: 'absolute',
+              left: roleMenu.x,
+              top: roleMenu.y,
+              backgroundColor: '#2a2a2e',
+              border: '1px solid #444',
+              borderRadius: 6,
+              padding: '4px 0',
+              minWidth: 140,
+              boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
+              fontFamily: '-apple-system, "SF Pro Text", "Helvetica Neue", sans-serif',
+              fontSize: 12,
+            }}
+          >
+            {[
+              { label: 'Set as Melody', role: 'melody' as const },
+              { label: 'Set as Chord', role: 'chord' as const },
+              { label: 'Clear Role', role: undefined },
+            ].map(({ label, role }) => (
+              <div
+                key={label}
+                style={{
+                  padding: '6px 14px',
+                  cursor: 'pointer',
+                  color: '#ccc',
+                }}
+                onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.backgroundColor = '#3a3a3e'; }}
+                onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.backgroundColor = 'transparent'; }}
+                onMouseUp={(e) => {
+                  e.stopPropagation();
+                  setNoteRole(activeClipId, [...selectedNoteIds], role);
+                  setRoleMenu(null);
+                }}
+              >
+                {label}
+              </div>
+            ))}
+          </div>
+        </div>
       )}
     </div>
   );

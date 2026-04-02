@@ -1,5 +1,6 @@
 import React, { useRef, useEffect, useCallback } from 'react';
 import { snapTick } from '../../utils/timing';
+import { useUiStore } from '../../store/uiStore';
 
 interface PlayheadHandleProps {
   width: number;
@@ -8,7 +9,6 @@ interface PlayheadHandleProps {
   ticksPerBeat: number;
   numerator: number;
   denominator: number;
-  playheadTick: number;
   snapTicks: number;
   onSetPlayhead?: (tick: number) => void;
 }
@@ -22,10 +22,10 @@ export const PlayheadHandle: React.FC<PlayheadHandleProps> = ({
   ticksPerBeat,
   numerator,
   denominator,
-  playheadTick,
   snapTicks,
   onSetPlayhead,
 }) => {
+  const playheadTick = useUiStore((s) => s.playheadTick);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const isDragging = useRef(false);
   const canvasLeft = useRef(0);

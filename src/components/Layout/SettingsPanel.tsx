@@ -8,6 +8,8 @@ interface SettingsPanelProps {
 export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
   const useJazzSymbols = useUiStore((s) => s.useJazzSymbols);
   const setUseJazzSymbols = useUiStore((s) => s.setUseJazzSymbols);
+  const showRoleHeatmap = useUiStore((s) => s.showRoleHeatmap);
+  const setShowRoleHeatmap = useUiStore((s) => s.setShowRoleHeatmap);
 
   return (
     <div
@@ -60,6 +62,27 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
           <span>Jazz chord symbols</span>
           <span style={{ color: '#777', fontSize: 11 }}>
             maj7{'\u2192'}{'\u25B3'}7 dim{'\u2192'}{'\u00B0'} m7b5{'\u2192'}{'\u00F8'}7
+          </span>
+        </label>
+
+        <label
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            cursor: 'pointer',
+            padding: '4px 0',
+          }}
+        >
+          <input
+            type="checkbox"
+            checked={showRoleHeatmap}
+            onChange={(e) => setShowRoleHeatmap(e.target.checked)}
+            style={{ accentColor: '#5090ff', width: 14, height: 14 }}
+          />
+          <span>Role heatmap</span>
+          <span style={{ color: '#777', fontSize: 11 }}>
+            melody/chord zones
           </span>
         </label>
       </div>

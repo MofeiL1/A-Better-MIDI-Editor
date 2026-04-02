@@ -38,6 +38,7 @@ interface UiStore {
 
   // Settings
   useJazzSymbols: boolean;
+  showRoleHeatmap: boolean;
 
   setTool: (tool: ToolMode) => void;
   setViewport: (v: Partial<Viewport>) => void;
@@ -59,6 +60,7 @@ interface UiStore {
   setVelocityDragNoteId: (id: string | null) => void;
   setHoveredNoteId: (id: string | null) => void;
   setUseJazzSymbols: (v: boolean) => void;
+  setShowRoleHeatmap: (v: boolean) => void;
 }
 
 export const useUiStore = create<UiStore>((set) => ({
@@ -78,7 +80,7 @@ export const useUiStore = create<UiStore>((set) => ({
   scaleRoot: 0, // C
   scaleMode: 'major',
   scaleAutoDetect: true,
-  audioLatency: 0.05,
+  audioLatency: 0.1,
   samplerReady: false,
   clipboard: [],
   lastDrawnDuration: 480, // quarter note at 480 tpb
@@ -86,6 +88,7 @@ export const useUiStore = create<UiStore>((set) => ({
   velocityDragNoteId: null,
   hoveredNoteId: null,
   useJazzSymbols: false,
+  showRoleHeatmap: true,
 
   setTool: (tool) => set({ tool }),
   setViewport: (v) =>
@@ -114,4 +117,5 @@ export const useUiStore = create<UiStore>((set) => ({
   setVelocityDragNoteId: (id) => set({ velocityDragNoteId: id }),
   setHoveredNoteId: (id) => set({ hoveredNoteId: id }),
   setUseJazzSymbols: (v) => set({ useJazzSymbols: v }),
+  setShowRoleHeatmap: (v) => set({ showRoleHeatmap: v }),
 }));

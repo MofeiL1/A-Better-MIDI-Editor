@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { Project, Note, ProjectSnapshot } from '../types/model';
 import { getEffectiveDuration } from '../utils/noteDuration';
+
 import { generateId } from '../utils/id';
 import { useUiStore } from './uiStore';
 
@@ -70,6 +71,9 @@ interface ProjectStore {
   confirmDuration: (clipId: string, noteIds: string[]) => void;
   clearDuration: (clipId: string, noteIds: string[]) => void;
   setNoteDuration: (clipId: string, noteIds: string[], duration: number) => void;
+
+  // Role
+  setNoteRole: (clipId: string, noteIds: string[], role: 'melody' | 'chord' | undefined) => void;
 
   // Project-level
   loadProject: (project: Project) => void;
@@ -151,11 +155,10 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     const id = generateId();
     const newProject = { ...project, tracks: project.tracks.map((t) => ({
       ...t,
-      clips: t.clips.map((c) =>
-        c.id === clipId
-          ? { ...c, notes: [...c.notes, { ...noteData, id }] }
-          : c
-      ),
+      clips: t.clips.map((c) => {
+        if (c.id !== clipId) return c;
+        return { ...c, notes: [...c.notes, { ...noteData, id } as Note] };
+      }),
     }))};
     set({ project: newProject });
     return id;
@@ -422,6 +425,26 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
               ...c,
               notes: c.notes.map((n) =>
                 idSet.has(n.id) ? { ...n, duration } : n
+              ),
+            }
+          : c
+      ),
+    }))};
+    set({ project: newProject });
+  },
+
+  setNoteRole: (clipId, noteIds, role) => {
+    get().pushUndo();
+    const { project } = get();
+    const idSet = new Set(noteIds);
+    const newProject = { ...project, tracks: project.tracks.map((t) => ({
+      ...t,
+      clips: t.clips.map((c) =>
+        c.id === clipId
+          ? {
+              ...c,
+              notes: c.notes.map((n) =>
+                idSet.has(n.id) ? { ...n, role } : n
               ),
             }
           : c

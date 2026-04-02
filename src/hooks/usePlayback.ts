@@ -3,7 +3,7 @@ import * as Tone from 'tone';
 import { useProjectStore } from '../store/projectStore';
 import { useUiStore } from '../store/uiStore';
 import { tickToSeconds } from '../utils/timing';
-import { getEffectiveDuration } from '../utils/noteDuration';
+import { computeNullDurations } from '../utils/noteDuration';
 import { getPianoSampler, getSamplerSync } from '../audio/pianoSampler';
 
 // Module-level state: shared across all usePlayback() instances
@@ -67,9 +67,14 @@ export function usePlayback() {
     startTick = playheadTick;
     const startOffset = tickToSeconds(playheadTick, bpm, tpb);
 
+    // Pre-compute null durations once (role-aware) instead of per-note O(N²)
+    const nullDurations = computeNullDurations(clip.notes, ticksPerMeasure);
+
     for (const note of clip.notes) {
       const noteStartSec = tickToSeconds(note.startTick, bpm, tpb) - startOffset;
-      const effectiveDur = getEffectiveDuration(note, clip.notes, ticksPerMeasure);
+      const effectiveDur = note.duration !== null
+        ? note.duration
+        : (nullDurations.get(note.id) ?? ticksPerMeasure);
       const noteDurSec = Math.max(0.05, tickToSeconds(effectiveDur, bpm, tpb));
       if (noteStartSec < 0) continue;
 

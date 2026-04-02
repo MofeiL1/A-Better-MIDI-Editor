@@ -76,6 +76,7 @@ export type Note = {
   velocity: number; // 0–127
   channel: number;
   pitchBend: BendPoint[];
+  role?: 'melody' | 'chord'; // undefined = 自动推断（同 startTick 最高音 = melody）
 };
 
 // ─── MPE 弯音曲线 ─────────────────────────────────────────
